@@ -59,6 +59,11 @@
 typedef __m512 __mw;
 typedef __m512i __mwi;
 
+void print_simd(__m512) {}
+void print_simd(__m512i) {}
+
+#define _mmw_storeu_ps				_mm512_storeu_ps
+#define _mmw_loadu_ps				_mm512_loadu_ps
 #define _mmw_set1_ps                _mm512_set1_ps
 #define _mmw_setzero_ps             _mm512_setzero_ps
 #define _mmw_and_ps                 _mm512_and_ps

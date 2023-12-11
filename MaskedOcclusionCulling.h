@@ -38,16 +38,16 @@
 // Defines used to configure the implementation
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#ifndef QUICK_MASK
-/*!
- * Configure the algorithm used for updating and merging hierarchical z buffer entries. If QUICK_MASK
- * is defined to 1, use the algorithm from the paper "Masked Software Occlusion Culling", which has good
- * balance between performance and low leakage. If QUICK_MASK is defined to 0, use the algorithm from
- * "Masked Depth Culling for Graphics Hardware" which has less leakage, but also lower performance.
- */
-#define QUICK_MASK                      1
-
-#endif
+//#ifndef QUICK_MASK
+///*!
+// * Configure the algorithm used for updating and merging hierarchical z buffer entries. If QUICK_MASK
+// * is defined to 1, use the algorithm from the paper "Masked Software Occlusion Culling", which has good
+// * balance between performance and low leakage. If QUICK_MASK is defined to 0, use the algorithm from
+// * "Masked Depth Culling for Graphics Hardware" which has less leakage, but also lower performance.
+// */
+//#define QUICK_MASK                      1
+//
+//#endif
 
 #ifndef USE_D3D
 /*!
@@ -65,7 +65,7 @@
  * Define PRECISE_COVERAGE to 1 to more closely match GPU rasterization rules. The increased precision comes
  * at a cost of slightly lower performance.
  */
-#define PRECISE_COVERAGE                1
+#define PRECISE_COVERAGE                0
 
 #endif
 
@@ -114,7 +114,6 @@
 #endif
 #endif
 
-
 #if MOC_RECORDER_ENABLE
 
 #include <mutex>
@@ -123,6 +122,17 @@ class FrameRecorder;
 
 #endif // #if MOC_RECORDER_ENABLE
 
+#ifndef MOC_SUPPORT_SORTING
+#if PRECISE_COVERAGE 
+#define MOC_SUPPORT_SORTING              0
+#else
+#define MOC_SUPPORT_SORTING              1
+#endif
+#endif
+#if MOC_SUPPORT_SORTING != 0
+#include <vector>
+#include <algorithm>
+#endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Masked occlusion culling class
@@ -361,7 +371,11 @@ public:
 	 * \return Will return VIEW_CULLED if all triangles are either outside the frustum or
 	 *         backface culled, returns VISIBLE otherwise.
 	 */
-	virtual CullingResult RenderTriangles(const float *inVtx, const unsigned int *inTris, int nTris, const float *modelToClipMatrix = nullptr, BackfaceWinding bfWinding = BACKFACE_CW, ClipPlanes clipPlaneMask = CLIP_PLANE_ALL, const VertexLayout &vtxLayout = VertexLayout(16, 4, 12)) = 0;
+	virtual CullingResult RenderTriangles(const float* inVtx, const unsigned int* inTris, int nTris, const float* modelToClipMatrix = nullptr, BackfaceWinding bfWinding = BACKFACE_CW, ClipPlanes clipPlaneMask = CLIP_PLANE_ALL, const VertexLayout& vtxLayout = VertexLayout(16, 4, 12)) = 0;
+#if MOC_SUPPORT_SORTING != 0
+	virtual CullingResult RenderTrianglesSort(const float* inVtx, const unsigned int* inTris, int nTris, const float* modelToClipMatrix = nullptr, BackfaceWinding bfWinding = BACKFACE_CW, ClipPlanes clipPlaneMask = CLIP_PLANE_ALL, const VertexLayout& vtxLayout = VertexLayout(16, 4, 12)) = 0;
+	virtual void RenderFlush() = 0;
+#endif
 
 	/*!
 	 * \brief Occlusion query for a rectangle with a given depth. The rectangle is given 
@@ -576,8 +590,12 @@ public:
     // If recording is not enabled, calling this function will do nothing.
     void RecordRenderTriangles( const float *inVtx, const unsigned int *inTris, int nTris, const float *modelToClipMatrix = nullptr, ClipPlanes clipPlaneMask = CLIP_PLANE_ALL, BackfaceWinding bfWinding = BACKFACE_CW, const VertexLayout &vtxLayout = VertexLayout( 16, 4, 12 ), CullingResult cullingResult = (CullingResult)-1 );
 #endif // #if MOC_RECORDER_ENABLE
+	
+public:
+	bool quickMask = true;
 
 protected:
+	bool mQuickMask = true;
 	pfnAlignedAlloc mAlignedAllocCallback;
 	pfnAlignedFree  mAlignedFreeCallback;
 

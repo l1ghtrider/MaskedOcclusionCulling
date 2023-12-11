@@ -105,6 +105,7 @@ int main(int argc, char* argv[])
 	const int width = 1920, height = 1080;
 	moc->SetResolution(width, height);
 	moc->SetNearClipPlane(1.0f);
+	moc->quickMask = true;
 
 	// Clear the depth buffer
 	moc->ClearBuffer();
@@ -119,14 +120,8 @@ int main(int argc, char* argv[])
 	unsigned int triIndices[] = { 0, 1, 2 };
 
 	// Render the triangle
-	moc->RenderTriangles((float*)triVerts, triIndices, 1);
-
-	// A clockwise winded (backfacing) triangle
-	ClipspaceVertex cwTriVerts[] = { { 7, -7, 0, 20 },{ 7.5, -7, 0, 20 },{ 7, -7.5, 0, 20 } };
-	unsigned int cwTriIndices[] = { 0, 1, 2 };
-
-	// Render with counter-clockwise backface culling, the triangle is rendered
-	moc->RenderTriangles((float*)cwTriVerts, cwTriIndices, 1, nullptr, MaskedOcclusionCulling::BACKFACE_CCW);
+	//moc->RenderTriangles((float*)triVerts, triIndices, 1);
+	moc->RenderTrianglesSort((float*)triVerts, triIndices, 1);
 
 	// A quad completely within the view frustum
 	ClipspaceVertex quadVerts[] = { { -150, -150, 0, 200 }, { -10, -65, 0, 75 }, { 0, 0, 0, 20 }, { -40, 10, 0, 50 } };
@@ -134,21 +129,7 @@ int main(int argc, char* argv[])
 
 	// Render the quad. As an optimization, indicate that clipping is not required as it is 
 	// completely inside the view frustum
-	moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
-
-	// A triangle specified on struct of arrays (SoA) form
-	float SoAVerts[] = {
-		 10, 10,   7, // x-coordinates
-		-10, -7, -10, // y-coordinates
-		 10, 10,  10  // w-coordinates
-	};
-
-	// Set vertex layout (stride, y offset, w offset)
-	MaskedOcclusionCulling::VertexLayout SoAVertexLayout(sizeof(float), 3 * sizeof(float), 6 * sizeof(float));
-
-	// Render triangle with SoA layout
-	moc->RenderTriangles((float*)SoAVerts, triIndices, 1, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_ALL, SoAVertexLayout);
-
+	// l1ght : move to below
 
 	////////////////////////////////////////////////////////////////////////////////////////
 	// Perform some occlusion queries
@@ -169,8 +150,14 @@ int main(int argc, char* argv[])
 		printf("Tested triangle is outside view frustum\n");
 
 	// Render the occlusion query triangle to show its position
-	moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
-
+	
+	//moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+	//moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
+	
+	moc->RenderTrianglesSort((float*)oqTriVerts, oqTriIndices, 1);
+	moc->RenderFlush();
+	moc->RenderTrianglesSort((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+	moc->RenderFlush();
 
 	// Perform an occlusion query testing if a rectangle is visible. The rectangle is completely 
 	// behind the previously drawn quad, so the query should indicate that it's occluded

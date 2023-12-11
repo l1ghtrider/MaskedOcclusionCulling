@@ -64,6 +64,11 @@
 typedef __m256 __mw;
 typedef __m256i __mwi;
 
+void print_simd(__m256) {}
+void print_simd(__m256i) {}
+
+#define _mmw_storeu_ps				_mm256_storeu_ps
+#define _mmw_loadu_ps				_mm256_loadu_ps
 #define _mmw_set1_ps                _mm256_set1_ps
 #define _mmw_setzero_ps             _mm256_setzero_ps
 #define _mmw_and_ps                 _mm256_and_ps

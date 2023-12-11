@@ -24,6 +24,19 @@
 #include "FrameRecorder.h"
 #endif
 
+void print_simd(__m128 vec)
+{
+	float result[4];
+	_mm_storeu_ps(result, vec);
+	printf("vec (%f %f %f %f)\n", result[0], result[1], result[2], result[3]);
+}
+void print_simd(__m128i vector)
+{
+	int result[4];
+	_mm_storeu_si128((__m128i*)result, vector);
+	printf("vec (%d %d %d %d)\n", result[0], result[1], result[2], result[3]);
+}
+
 #if defined(__AVX__) || defined(__AVX2__)
 	// For performance reasons, the MaskedOcclusionCullingAVX2/512.cpp files should be compiled with VEX encoding for SSE instructions (to avoid 
 	// AVX-SSE transition penalties, see https://software.intel.com/en-us/articles/avoiding-avx-sse-transition-penalties). However, this file
@@ -150,6 +163,8 @@ typedef MaskedOcclusionCulling::VertexLayout    VertexLayout;
 typedef __m128 __mw;
 typedef __m128i __mwi;
 
+#define _mmw_storeu_ps				_mm_storeu_ps
+#define _mmw_loadu_ps				_mm_loadu_ps
 #define _mmw_set1_ps                _mm_set1_ps
 #define _mmw_setzero_ps             _mm_setzero_ps
 #define _mmw_and_ps                 _mm_and_ps
@@ -430,7 +445,8 @@ MaskedOcclusionCulling *MaskedOcclusionCulling::Create(Implementation RequestedS
 {
 	MaskedOcclusionCulling *object = nullptr;
 
-	MaskedOcclusionCulling::Implementation impl = DetectCPUFeatures(alignedAlloc, alignedFree);
+	//MaskedOcclusionCulling::Implementation impl = DetectCPUFeatures(alignedAlloc, alignedFree);
+	MaskedOcclusionCulling::Implementation impl = MaskedOcclusionCulling::SSE2;
 
 	if (RequestedSIMD < impl)
 		impl = RequestedSIMD;
