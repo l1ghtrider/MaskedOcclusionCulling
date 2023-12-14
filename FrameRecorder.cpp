@@ -1,3 +1,4 @@
+#if USE_SOC
 ////////////////////////////////////////////////////////////////////////////////
 // Copyright 2017 Intel Corporation
 //
@@ -450,3 +451,5 @@ bool FrameRecording::Load( const char * inputFilePath, FrameRecording & outRecor
 #endif // #if MOC_RECORDER_ENABLE_PLAYBACK
 
 #endif // #if MOC_RECORDER_ENABLE
+
+#endif

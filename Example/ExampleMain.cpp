@@ -105,7 +105,7 @@ int main(int argc, char* argv[])
 	const int width = 1920, height = 1080;
 	moc->SetResolution(width, height);
 	moc->SetNearClipPlane(1.0f);
-	moc->quickMask = true;
+	moc->quickMask = true; //l1ght example : switch quick mask
 
 	// Clear the depth buffer
 	moc->ClearBuffer();
@@ -121,7 +121,7 @@ int main(int argc, char* argv[])
 
 	// Render the triangle
 	//moc->RenderTriangles((float*)triVerts, triIndices, 1);
-	moc->RenderTrianglesSort((float*)triVerts, triIndices, 1);
+	//moc->RenderTrianglesSort((float*)triVerts, triIndices, 1);
 
 	// A quad completely within the view frustum
 	ClipspaceVertex quadVerts[] = { { -150, -150, 0, 200 }, { -10, -65, 0, 75 }, { 0, 0, 0, 20 }, { -40, 10, 0, 50 } };
@@ -154,10 +154,16 @@ int main(int argc, char* argv[])
 	//moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
 	//moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
 	
+	moc->delayMask = false;
 	moc->RenderTrianglesSort((float*)oqTriVerts, oqTriIndices, 1);
-	moc->RenderFlush();
+	//moc->RenderFlush(); //l1ght example : uncomment to show no sort situation
 	moc->RenderTrianglesSort((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
-	moc->RenderFlush();
+	moc->TriangleFlush();
+
+	//moc->delayMask = true;
+	//moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
+	//moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+	//moc->RenderFlush();
 
 	// Perform an occlusion query testing if a rectangle is visible. The rectangle is completely 
 	// behind the previously drawn quad, so the query should indicate that it's occluded

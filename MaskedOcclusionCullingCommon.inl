@@ -1,3 +1,12 @@
+﻿#include <algorithm>
+#ifndef MOC_SUPPORT_DELAY
+#define MOC_SUPPORT_DELAY 1
+#endif
+
+#ifdef MOC_SUPPORT_SORTING
+#undef MOC_SUPPORT_SORTING
+#endif
+#define MOC_SUPPORT_SORTING 1
 #if MOC_SUPPORT_SORTING != 0
 struct Node
 {
@@ -31,8 +40,8 @@ static std::vector<float> nodeZ = std::vector<float>(1000 * SIMD_LANES);
 // Common SIMD math utility functions
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<typename T> FORCE_INLINE T max(const T &a, const T &b) { return a > b ? a : b; }
-template<typename T> FORCE_INLINE T min(const T &a, const T &b) { return a < b ? a : b; }
+template<typename T> FORCE_INLINE T max(const T& a, const T& b) { return a > b ? a : b; }
+template<typename T> FORCE_INLINE T min(const T& a, const T& b) { return a < b ? a : b; }
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Common defines and constants
@@ -52,15 +61,15 @@ template<typename T> FORCE_INLINE T min(const T &a, const T &b) { return a < b ?
 
 // The number of fixed point bits used to represent vertex coordinates / edge slopes.
 #if PRECISE_COVERAGE != 0
-	#define FP_BITS             8
-	#define FP_HALF_PIXEL       (1 << (FP_BITS - 1))
-	#define FP_INV              (1.0f / (float)(1 << FP_BITS))
+#define FP_BITS             8
+#define FP_HALF_PIXEL       (1 << (FP_BITS - 1))
+#define FP_INV              (1.0f / (float)(1 << FP_BITS))
 #else
 	// Note that too low precision, without precise coverage, may cause overshoots / false coverage during rasterization.
 	// This is configured for 14 bits for AVX512 and 16 bits for SSE. Max tile slope delta is roughly 
 	// (screenWidth + 2*(GUARD_BAND_PIXEL_SIZE + 1)) * (2^FP_BITS * (TILE_HEIGHT + GUARD_BAND_PIXEL_SIZE + 1))  
 	// and must fit in 31 bits. With this config, max image resolution (width) is ~3272, so stay well clear of this limit. 
-	#define FP_BITS             (19 - TILE_HEIGHT_SHIFT)
+#define FP_BITS             (19 - TILE_HEIGHT_SHIFT)
 #endif
 
 // Tile dimensions in fixed point coordinates
@@ -84,10 +93,12 @@ template<typename T> FORCE_INLINE T min(const T &a, const T &b) { return a < b ?
 
 // Only gather statistics if enabled.
 #if ENABLE_STATS != 0
-	#define STATS_ADD(var, val)     _InterlockedExchangeAdd64( &var, val )
+#define STATS_ADD(var, val)     _InterlockedExchangeAdd64( &var, val )
 #else
-	#define STATS_ADD(var, val)
+#define STATS_ADD(var, val)
 #endif
+
+#include "CrossDefine.inl"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SIMD common defines (constant values)
@@ -101,7 +112,7 @@ template<typename T> FORCE_INLINE T min(const T &a, const T &b) { return a < b ?
 // Vertex fetch utility function, need to be in global namespace due to template specialization
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-template<int N> FORCE_INLINE void VtxFetch4(__mw *v, const unsigned int *inTrisPtr, int triVtx, const float *inVtx, int numLanes)
+template<int N> FORCE_INLINE void VtxFetch4(__mw* v, const unsigned int* inTrisPtr, int triVtx, const float* inVtx, int numLanes)
 {
 	// Fetch 4 vectors (matching 1 sse part of the SIMD register), and continue to the next
 	const int ssePart = (SIMD_LANES / 4) - N;
@@ -109,12 +120,13 @@ template<int N> FORCE_INLINE void VtxFetch4(__mw *v, const unsigned int *inTrisP
 	{
 		int lane = 4 * ssePart + k;
 		if (numLanes > lane)
-			v[k] = _mmw_insertf32x4_ps(v[k], _mm_loadu_ps(&inVtx[inTrisPtr[lane * 3 + triVtx] << 2]), ssePart);
+			//l1ght : lane * 3 + triVtx represents which index, << 2 represents the vertices index
+			v[k] = _mmw_insertf32x4_ps(v[k], _mms_loadu_ps(&inVtx[inTrisPtr[lane * 3 + triVtx] << 2]), ssePart);
 	}
 	VtxFetch4<N - 1>(v, inTrisPtr, triVtx, inVtx, numLanes);
 }
 
-template<> FORCE_INLINE void VtxFetch4<0>(__mw *v, const unsigned int *inTrisPtr, int triVtx, const float *inVtx, int numLanes) 
+template<> FORCE_INLINE void VtxFetch4<0>(__mw* v, const unsigned int* inTrisPtr, int triVtx, const float* inVtx, int numLanes)
 {
 	// Workaround for unused parameter warning
 	(void)v; (void)inTrisPtr; (void)triVtx; (void)inVtx; (void)numLanes;
@@ -141,10 +153,10 @@ public:
 	__mw            mHalfHeight;
 	__mw            mCenterX;
 	__mw            mCenterY;
-	__m128          mCSFrustumPlanes[5];
-	__m128          mIHalfSize;
-	__m128          mICenter;
-	__m128i         mIScreenSize;
+	__ms          mCSFrustumPlanes[5];
+	__ms          mIHalfSize;
+	__ms          mICenter;
+	__msi         mIScreenSize;
 
 	float           mNearDist;
 	int             mWidth;
@@ -152,7 +164,12 @@ public:
 	int             mTilesWidth;
 	int             mTilesHeight;
 
-	ZTile           *mMaskedHiZBuffer;
+	ZTile* mMaskedHiZBuffer;
+#if MOC_SUPPORT_DELAY
+	float* mZBuffer;
+	unsigned int* mMaskBuffer;
+	int* mCounterBuffer;
+#endif
 	ScissorRect     mFullscreenScissor;
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -162,18 +179,23 @@ public:
 	MaskedOcclusionCullingPrivate(pfnAlignedAlloc alignedAlloc, pfnAlignedFree alignedFree) : mFullscreenScissor(0, 0, 0, 0)
 	{
 		mMaskedHiZBuffer = nullptr;
+#if MOC_SUPPORT_DELAY
+		mZBuffer = nullptr;
+		mMaskBuffer = nullptr;
+		mCounterBuffer = nullptr;
+#endif
 		mAlignedAllocCallback = alignedAlloc;
 		mAlignedFreeCallback = alignedFree;
 #if MOC_RECORDER_ENABLE
-        mRecorder = nullptr;
+		mRecorder = nullptr;
 #endif
 
 		SetNearClipPlane(0.0f);
-		mCSFrustumPlanes[0] = _mm_setr_ps(0.0f, 0.0f, 1.0f, 0.0f);
-		mCSFrustumPlanes[1] = _mm_setr_ps(1.0f, 0.0f, 1.0f, 0.0f);
-		mCSFrustumPlanes[2] = _mm_setr_ps(-1.0f, 0.0f, 1.0f, 0.0f);
-		mCSFrustumPlanes[3] = _mm_setr_ps(0.0f, 1.0f, 1.0f, 0.0f);
-		mCSFrustumPlanes[4] = _mm_setr_ps(0.0f, -1.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[0] = _mms_setr_ps(0.0f, 0.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[1] = _mms_setr_ps(1.0f, 0.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[2] = _mms_setr_ps(-1.0f, 0.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[3] = _mms_setr_ps(0.0f, 1.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[4] = _mms_setr_ps(0.0f, -1.0f, 1.0f, 0.0f);
 
 		memset(&mStats, 0, sizeof(OcclusionCullingStatistics));
 
@@ -185,9 +207,20 @@ public:
 		if (mMaskedHiZBuffer != nullptr)
 			mAlignedFreeCallback(mMaskedHiZBuffer);
 		mMaskedHiZBuffer = nullptr;
+#if MOC_SUPPORT_DELAY
+		if (mZBuffer != nullptr)
+			mAlignedFreeCallback(mZBuffer);
+		mZBuffer = nullptr;
+		if (mMaskBuffer != nullptr)
+			mAlignedFreeCallback(mMaskBuffer);
+		mMaskBuffer = nullptr;
+		if (mCounterBuffer != nullptr)
+			mAlignedFreeCallback(mCounterBuffer);
+		mCounterBuffer = nullptr;
+#endif
 
 #if MOC_RECORDER_ENABLE
-        assert( mRecorder == nullptr ); // forgot to call StopRecording()?
+		assert(mRecorder == nullptr); // forgot to call StopRecording()?
 #endif
 	}
 
@@ -202,27 +235,38 @@ public:
 #endif
 
 		// Delete current masked hierarchical Z buffer
-		if (mMaskedHiZBuffer != nullptr)
+		if (mMaskedHiZBuffer != nullptr) 
 			mAlignedFreeCallback(mMaskedHiZBuffer);
 		mMaskedHiZBuffer = nullptr;
+#if MOC_SUPPORT_DELAY
+		if (mZBuffer != nullptr)
+			mAlignedFreeCallback(mZBuffer);
+		mZBuffer = nullptr;
+		if (mMaskBuffer != nullptr)
+			mAlignedFreeCallback(mMaskBuffer);
+		mMaskBuffer = nullptr;
+		if (mCounterBuffer != nullptr)
+			mAlignedFreeCallback(mCounterBuffer);
+		mCounterBuffer = nullptr;
+#endif
 
 		// Setup various resolution dependent constant values
 		mWidth = (int)width;
 		mHeight = (int)height;
 		mTilesWidth = (int)(width + TILE_WIDTH - 1) >> TILE_WIDTH_SHIFT;
 		mTilesHeight = (int)(height + TILE_HEIGHT - 1) >> TILE_HEIGHT_SHIFT;
-		mCenterX = _mmw_set1_ps((float)mWidth  * 0.5f);
+		mCenterX = _mmw_set1_ps((float)mWidth * 0.5f);
 		mCenterY = _mmw_set1_ps((float)mHeight * 0.5f);
-		mICenter = _mm_setr_ps((float)mWidth * 0.5f, (float)mWidth * 0.5f, (float)mHeight * 0.5f, (float)mHeight * 0.5f);
-		mHalfWidth = _mmw_set1_ps((float)mWidth  * 0.5f);
+		mICenter = _mms_setr_ps((float)mWidth * 0.5f, (float)mWidth * 0.5f, (float)mHeight * 0.5f, (float)mHeight * 0.5f);
+		mHalfWidth = _mmw_set1_ps((float)mWidth * 0.5f);
 #if USE_D3D != 0
 		mHalfHeight = _mmw_set1_ps((float)-mHeight * 0.5f);
-		mIHalfSize = _mm_setr_ps((float)mWidth * 0.5f, (float)mWidth * 0.5f, (float)-mHeight * 0.5f, (float)-mHeight * 0.5f);
+		mIHalfSize = _mms_setr_ps((float)mWidth * 0.5f, (float)mWidth * 0.5f, (float)-mHeight * 0.5f, (float)-mHeight * 0.5f);
 #else
 		mHalfHeight = _mmw_set1_ps((float)mHeight * 0.5f);
-		mIHalfSize = _mm_setr_ps((float)mWidth * 0.5f, (float)mWidth * 0.5f, (float)mHeight * 0.5f, (float)mHeight * 0.5f);
+		mIHalfSize = _mmw_setr_ps((float)mWidth * 0.5f, (float)mWidth * 0.5f, (float)mHeight * 0.5f, (float)mHeight * 0.5f);
 #endif
-		mIScreenSize = _mm_setr_epi32(mWidth - 1, mWidth - 1, mHeight - 1, mHeight - 1);
+		mIScreenSize = _mms_setr_epi32(mWidth - 1, mWidth - 1, mHeight - 1, mHeight - 1);
 
 		// Setup a full screen scissor rectangle
 		mFullscreenScissor.mMinX = 0;
@@ -233,33 +277,41 @@ public:
 		// Adjust clip planes to include a small guard band to avoid clipping leaks
 		float guardBandWidth = (2.0f / (float)mWidth) * GUARD_BAND_PIXEL_SIZE;
 		float guardBandHeight = (2.0f / (float)mHeight) * GUARD_BAND_PIXEL_SIZE;
-		mCSFrustumPlanes[1] = _mm_setr_ps(1.0f - guardBandWidth, 0.0f, 1.0f, 0.0f);
-		mCSFrustumPlanes[2] = _mm_setr_ps(-1.0f + guardBandWidth, 0.0f, 1.0f, 0.0f);
-		mCSFrustumPlanes[3] = _mm_setr_ps(0.0f, 1.0f - guardBandHeight, 1.0f, 0.0f);
-		mCSFrustumPlanes[4] = _mm_setr_ps(0.0f, -1.0f + guardBandHeight, 1.0f, 0.0f);
+		mCSFrustumPlanes[1] = _mms_setr_ps(1.0f - guardBandWidth, 0.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[2] = _mms_setr_ps(-1.0f + guardBandWidth, 0.0f, 1.0f, 0.0f);
+		mCSFrustumPlanes[3] = _mms_setr_ps(0.0f, 1.0f - guardBandHeight, 1.0f, 0.0f);
+		mCSFrustumPlanes[4] = _mms_setr_ps(0.0f, -1.0f + guardBandHeight, 1.0f, 0.0f);
 
 		// Allocate masked hierarchical Z buffer (if zero size leave at nullptr)
-		if(mTilesWidth * mTilesHeight > 0)
-			mMaskedHiZBuffer = (ZTile *)mAlignedAllocCallback(64, sizeof(ZTile) * mTilesWidth * mTilesHeight);
+		if (mTilesWidth * mTilesHeight > 0)
+		{
+			mMaskedHiZBuffer = (ZTile*)mAlignedAllocCallback(64, sizeof(ZTile) * mTilesWidth * mTilesHeight);
+#if MOC_SUPPORT_DELAY
+			mZBuffer = (float*)mAlignedAllocCallback(16, sizeof(float) * mTilesWidth * mTilesHeight * delaySize * SIMD_LANES);
+			mMaskBuffer = (unsigned int*)mAlignedAllocCallback(16, sizeof(unsigned int) * mTilesWidth * mTilesHeight * delaySize * SIMD_LANES);
+			mCounterBuffer = (int*)mAlignedAllocCallback(16, sizeof(int) * mTilesWidth * mTilesHeight * SIMD_LANES);
+			memset(mCounterBuffer, 0, sizeof(int) * mTilesWidth * mTilesHeight * SIMD_LANES);
+#endif
+		}
 	}
 
-	void GetResolution(unsigned int &width, unsigned int &height) const override
+	void GetResolution(unsigned int& width, unsigned int& height) const override
 	{
 		width = mWidth;
 		height = mHeight;
 	}
 
-	void ComputeBinWidthHeight(unsigned int nBinsW, unsigned int nBinsH, unsigned int & outBinWidth, unsigned int & outBinHeight) override
+	void ComputeBinWidthHeight(unsigned int nBinsW, unsigned int nBinsH, unsigned int& outBinWidth, unsigned int& outBinHeight) override
 	{
 		outBinWidth = (mWidth / nBinsW) - ((mWidth / nBinsW) % TILE_WIDTH);
 		outBinHeight = (mHeight / nBinsH) - ((mHeight / nBinsH) % TILE_HEIGHT);
 	}
 
-    void SetNearClipPlane(float nearDist) override
+	void SetNearClipPlane(float nearDist) override
 	{
 		// Setup the near frustum plane
 		mNearDist = nearDist;
-		mCSFrustumPlanes[0] = _mm_setr_ps(0.0f, 0.0f, 1.0f, -nearDist);
+		mCSFrustumPlanes[0] = _mms_setr_ps(0.0f, 0.0f, 1.0f, -nearDist);
 	}
 
 	float GetNearClipPlane() const override
@@ -269,6 +321,10 @@ public:
 
 	void ClearBuffer() override
 	{
+#if MOC_DEBUG != 0
+		tested = 0;
+		culled = 0;
+#endif
 #if MOC_SUPPORT_SORTING != 0
 		nodes.resize(0);
 		nodeX.resize(0);
@@ -276,7 +332,7 @@ public:
 		nodeZ.resize(0);
 		cached = 0;
 #endif
-
+		mQuickMask = quickMask;
 		assert(mMaskedHiZBuffer != nullptr);
 
 		// Iterate through all depth tiles and clear to default values
@@ -286,11 +342,13 @@ public:
 
 			// Clear z0 to beyond infinity to ensure we never merge with clear data
 			mMaskedHiZBuffer[i].mZMin[0] = _mmw_set1_ps(-1.0f);
-if (mQuickMask)
-			// Clear z1 to nearest depth value as it is pushed back on each update
-			mMaskedHiZBuffer[i].mZMin[1] = _mmw_set1_ps(FLT_MAX);
-else
-			mMaskedHiZBuffer[i].mZMin[1] = _mmw_setzero_ps();
+			if (mQuickMask) // Clear z1 to nearest depth value as it is pushed back on each update
+				mMaskedHiZBuffer[i].mZMin[1] = _mmw_set1_ps(FLT_MAX);
+			else
+				mMaskedHiZBuffer[i].mZMin[1] = _mmw_setzero_ps();
+#if MOC_SUPPORT_DELAY
+			mCounterBuffer[i] = 0;
+#endif
 		}
 
 #if ENABLE_STATS != 0
@@ -298,12 +356,11 @@ else
 #endif
 
 #if MOC_RECORDER_ENABLE != 0
-        {
-            std::lock_guard<std::mutex> lock( mRecorderMutex );
-            if( mRecorder != nullptr ) mRecorder->RecordClearBuffer();
-        }
+		{
+			std::lock_guard<std::mutex> lock(mRecorderMutex);
+			if (mRecorder != nullptr) mRecorder->RecordClearBuffer();
+		}
 #endif
-		mQuickMask = quickMask;
 	}
 
 
@@ -349,8 +406,8 @@ else
 				{
 					STATS_ADD(mStats.mOccluders.mNumTilesMerged, 1);
 					UpdateTileQuick(i, RastMaskB, zMinB[1]);
-				}
-			}
+		}
+	}
 			else
 			{
 				// Clear z0 to beyond infinity to ensure we never merge with clear data
@@ -410,34 +467,34 @@ else
 	// Polygon clipping functions
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	FORCE_INLINE int ClipPolygon(__m128 *outVtx, __m128 *inVtx, const __m128 &plane, int n) const
+	FORCE_INLINE int ClipPolygon(__ms* outVtx, __ms* inVtx, const __ms& plane, int n) const
 	{
-		__m128 p0 = inVtx[n - 1];
-		__m128 dist0 = _mmx_dp4_ps(p0, plane);
+		__ms p0 = inVtx[n - 1];
+		__ms dist0 = _mmx_dp4_ps(p0, plane);
 
 		// Loop over all polygon edges and compute intersection with clip plane (if any)
 		int nout = 0;
 		for (int k = 0; k < n; k++)
 		{
-			__m128 p1 = inVtx[k];
-			__m128 dist1 = _mmx_dp4_ps(p1, plane);
-			int dist0Neg = _mm_movemask_ps(dist0);
+			__ms p1 = inVtx[k];
+			__ms dist1 = _mmx_dp4_ps(p1, plane);
+			int dist0Neg = _mms_movemask_ps(dist0);
 			if (!dist0Neg)	// dist0 > 0.0f
 				outVtx[nout++] = p0;
 
 			// Edge intersects the clip plane if dist0 and dist1 have opposing signs
-			if (_mm_movemask_ps(_mm_xor_ps(dist0, dist1)))
+			if (_mms_movemask_ps(_mms_xor_ps(dist0, dist1)))
 			{
 				// Always clip from the positive side to avoid T-junctions
 				if (!dist0Neg)
 				{
-					__m128 t = _mm_div_ps(dist0, _mm_sub_ps(dist0, dist1));
-					outVtx[nout++] = _mmx_fmadd_ps(_mm_sub_ps(p1, p0), t, p0);
+					__ms t = _mms_div_ps(dist0, _mms_sub_ps(dist0, dist1));
+					outVtx[nout++] = _mmx_fmadd_ps(_mms_sub_ps(p1, p0), t, p0);
 				}
 				else
 				{
-					__m128 t = _mm_div_ps(dist1, _mm_sub_ps(dist1, dist0));
-					outVtx[nout++] = _mmx_fmadd_ps(_mm_sub_ps(p0, p1), t, p1);
+					__ms t = _mms_div_ps(dist1, _mms_sub_ps(dist1, dist0));
+					outVtx[nout++] = _mmx_fmadd_ps(_mms_sub_ps(p0, p1), t, p1);
 				}
 			}
 
@@ -447,7 +504,7 @@ else
 		return nout;
 	}
 
-	template<ClipPlanes CLIP_PLANE> void TestClipPlane(__mw *vtxX, __mw *vtxY, __mw *vtxW, unsigned int &straddleMask, unsigned int &triMask, ClipPlanes clipPlaneMask)
+	template<ClipPlanes CLIP_PLANE> void TestClipPlane(__mw* vtxX, __mw* vtxY, __mw* vtxW, unsigned int& straddleMask, unsigned int& triMask, ClipPlanes clipPlaneMask)
 	{
 		straddleMask = 0;
 		// Skip masked clip planes
@@ -469,15 +526,18 @@ else
 		}
 
 		// Look at FP sign and determine if tri is inside, outside or straddles the frustum plane
+		//l1ght clip : planeDp(distance from plane) < 0 -> inside; > 0 -> outside
 		__mw inside = _mmw_andnot_ps(planeDp[0], _mmw_andnot_ps(planeDp[1], _mmw_not_ps(planeDp[2])));
 		__mw outside = _mmw_and_ps(planeDp[0], _mmw_and_ps(planeDp[1], planeDp[2]));
 		unsigned int inMask = (unsigned int)_mmw_movemask_ps(inside);
 		unsigned int outMask = (unsigned int)_mmw_movemask_ps(outside);
+		//l1ght clip : some vertices inside while others outside
+		//l1ght clip :! masks only use SIMD_LANE size of bits to indicat validation
 		straddleMask = (~outMask) & (~inMask);
 		triMask &= ~outMask;
 	}
 
-	FORCE_INLINE void ClipTriangleAndAddToBuffer(__mw *vtxX, __mw *vtxY, __mw *vtxW, __m128 *clippedTrisBuffer, int &clipWriteIdx, unsigned int &triMask, unsigned int triClipMask, ClipPlanes clipPlaneMask)
+	FORCE_INLINE void ClipTriangleAndAddToBuffer(__mw* vtxX, __mw* vtxY, __mw* vtxW, __ms* clippedTrisBuffer, int& clipWriteIdx, unsigned int& triMask, unsigned int triClipMask, ClipPlanes clipPlaneMask)
 	{
 		if (!triClipMask)
 			return;
@@ -490,16 +550,16 @@ else
 		TestClipPlane<ClipPlanes::CLIP_PLANE_BOTTOM>(vtxX, vtxY, vtxW, straddleMask[3], triMask, clipPlaneMask);
 		TestClipPlane<ClipPlanes::CLIP_PLANE_TOP>(vtxX, vtxY, vtxW, straddleMask[4], triMask, clipPlaneMask);
 
-        // Clip triangle against straddling planes and add to the clipped triangle buffer
-		__m128 vtxBuf[2][8];
+		// Clip triangle against straddling planes and add to the clipped triangle buffer
+		__ms vtxBuf[2][8];
 
 #if CLIPPING_PRESERVES_ORDER != 0
 		unsigned int clipMask = triClipMask & triMask;
 		unsigned int clipAndStraddleMask = (straddleMask[0] | straddleMask[1] | straddleMask[2] | straddleMask[3] | straddleMask[4]) & clipMask;
-        // no clipping needed after all - early out
-        if (clipAndStraddleMask == 0)
+		// no clipping needed after all - early out
+		if (clipAndStraddleMask == 0)
 			return;
-		while( clipMask )
+		while (clipMask)
 		{
 			// Find and setup next triangle to clip
 			unsigned int triIdx = find_clear_lsb(&clipMask);
@@ -508,10 +568,12 @@ else
 
 			int bufIdx = 0;
 			int nClippedVerts = 3;
+			//l1ght clip : flat xyzw into vtxBuf as __ms(4 floats long)
 			for (int i = 0; i < 3; i++)
-				vtxBuf[0][i] = _mm_setr_ps(simd_f32(vtxX[i])[triIdx], simd_f32(vtxY[i])[triIdx], simd_f32(vtxW[i])[triIdx], 1.0f);
+				vtxBuf[0][i] = _mms_setr_ps(simd_f32(vtxX[i])[triIdx], simd_f32(vtxY[i])[triIdx], simd_f32(vtxW[i])[triIdx], 1.0f);
 
 			// Clip triangle with straddling planes. 
+			//l1ght clip : loop and add intersected vertices with rolling rule
 			for (int i = 0; i < 5; ++i)
 			{
 				if ((straddleMask[i] & triBit) && (clipPlaneMask & (1 << i))) // <- second part maybe not needed?
@@ -523,7 +585,7 @@ else
 
 			if (nClippedVerts >= 3)
 			{
-                // Write all triangles into the clip buffer and process them next loop iteration
+				// Write all triangles into the clip buffer and process them next loop iteration
 				clippedTrisBuffer[clipWriteIdx * 3 + 0] = vtxBuf[bufIdx][0];
 				clippedTrisBuffer[clipWriteIdx * 3 + 1] = vtxBuf[bufIdx][1];
 				clippedTrisBuffer[clipWriteIdx * 3 + 2] = vtxBuf[bufIdx][2];
@@ -537,7 +599,7 @@ else
 				}
 			}
 		}
-        // since all triangles were copied to clip buffer for next iteration, skip further processing
+		// since all triangles were copied to clip buffer for next iteration, skip further processing
 		triMask = 0;
 #else
 		unsigned int clipMask = (straddleMask[0] | straddleMask[1] | straddleMask[2] | straddleMask[3] | straddleMask[4]) & (triClipMask & triMask);
@@ -551,7 +613,7 @@ else
 			int bufIdx = 0;
 			int nClippedVerts = 3;
 			for (int i = 0; i < 3; i++)
-				vtxBuf[0][i] = _mm_setr_ps(simd_f32(vtxX[i])[triIdx], simd_f32(vtxY[i])[triIdx], simd_f32(vtxW[i])[triIdx], 1.0f);
+				vtxBuf[0][i] = _mmw_setr_ps(simd_f32(vtxX[i])[triIdx], simd_f32(vtxY[i])[triIdx], simd_f32(vtxW[i])[triIdx], 1.0f);
 
 			// Clip triangle with straddling planes. 
 			for (int i = 0; i < 5; ++i)
@@ -591,7 +653,7 @@ else
 	// Vertex transform & projection
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	FORCE_INLINE void TransformVerts(__mw *vtxX, __mw *vtxY, __mw *vtxW, const float *modelToClipMatrix)
+	FORCE_INLINE void TransformVerts(__mw* vtxX, __mw* vtxY, __mw* vtxW, const float* modelToClipMatrix)
 	{
 		if (modelToClipMatrix != nullptr)
 		{
@@ -607,12 +669,12 @@ else
 	}
 
 #if PRECISE_COVERAGE != 0
-	FORCE_INLINE void ProjectVertices(__mwi *ipVtxX, __mwi *ipVtxY, __mw *pVtxX, __mw *pVtxY, __mw *pVtxZ, const __mw *vtxX, const __mw *vtxY, const __mw *vtxW)
+	FORCE_INLINE void ProjectVertices(__mwi* ipVtxX, __mwi* ipVtxY, __mw* pVtxX, __mw* pVtxY, __mw* pVtxZ, const __mw* vtxX, const __mw* vtxY, const __mw* vtxW)
 	{
 #if USE_D3D != 0
-		static const int vertexOrder[] = {2, 1, 0};
+		static const int vertexOrder[] = { 2, 1, 0 };
 #else
-		static const int vertexOrder[] = {0, 1, 2};
+		static const int vertexOrder[] = { 0, 1, 2 };
 #endif
 
 		// Project vertices and transform to screen space. Snap to sub-pixel coordinates with FP_BITS precision.
@@ -630,13 +692,12 @@ else
 		}
 	}
 #else
-
-	FORCE_INLINE void ProjectVertices(__mw *pVtxX, __mw *pVtxY, __mw *pVtxZ, const __mw *vtxX, const __mw *vtxY, const __mw *vtxW)
+	FORCE_INLINE void ProjectVertices(__mw* pVtxX, __mw* pVtxY, __mw* pVtxZ, const __mw* vtxX, const __mw* vtxY, const __mw* vtxW)
 	{
 #if USE_D3D != 0
-		static const int vertexOrder[] = {2, 1, 0};
+		static const int vertexOrder[] = { 2, 1, 0 };
 #else
-		static const int vertexOrder[] = {0, 1, 2};
+		static const int vertexOrder[] = { 0, 1, 2 };
 #endif
 		// Project vertices and transform to screen space. Round to nearest integer pixel coordinate
 		for (int i = 0; i < 3; i++)
@@ -654,6 +715,7 @@ else
 	}
 #endif
 
+	//l1ght : lane wide number triangles
 #if MOC_SUPPORT_SORTING
 	FORCE_INLINE void ProjectVerticesSort(__mw* pVtxX, __mw* pVtxY, __mw* pVtxZ, float* pMaxZ, const __mw* vtxX, const __mw* vtxY, const __mw* vtxW)
 	{
@@ -663,7 +725,7 @@ else
 		static const int vertexOrder[] = { 0, 1, 2 };
 #endif
 		// Project vertices and transform to screen space. Round to nearest integer pixel coordinate
-		__mw maxZ;
+		__mw maxZ = _mmw_set1_ps(0);
 		for (int i = 0; i < 3; i++)
 		{
 			int idx = vertexOrder[i];
@@ -677,7 +739,7 @@ else
 			pVtxZ[idx] = rcpW;
 			if (i == 0) maxZ = rcpW; else maxZ = _mmw_max_ps(maxZ, rcpW);
 		}
-		_mmw_storeu_ps(pMaxZ, maxZ);
+		_mmw_storeu_ps(pMaxZ, maxZ); //l1ght float* : store __m128 to float* 
 	}
 #endif
 
@@ -685,7 +747,7 @@ else
 	// Common SSE/AVX input assembly functions, note that there are specialized gathers for the general case in the SSE/AVX specific files
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	FORCE_INLINE void GatherVerticesFast(__mw *vtxX, __mw *vtxY, __mw *vtxW, const float *inVtx, const unsigned int *inTrisPtr, int numLanes)
+	FORCE_INLINE void GatherVerticesFast(__mw* vtxX, __mw* vtxY, __mw* vtxW, const float* inVtx, const unsigned int* inTrisPtr, int numLanes)
 	{
 		// This function assumes that the vertex layout is four packed x, y, z, w-values.
 		// Since the layout is known we can get some additional performance by using a 
@@ -694,6 +756,7 @@ else
 
 		// Gather vertices 
 		__mw v[4], swz[4];
+		//l1ght : represent three vertices of triangle
 		for (int i = 0; i < 3; i++)
 		{
 			// Load 4 (x,y,z,w) vectors per SSE part of the SIMD register (so 4 vectors for SSE, 8 vectors for AVX)
@@ -701,14 +764,28 @@ else
 			VtxFetch4<SIMD_LANES / 4>(v, inTrisPtr, i, inVtx, numLanes);
 
 			// Transpose each individual SSE part of the SSE/AVX register (similar to _MM_TRANSPOSE4_PS)
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+			swz[0] = _mms_setr_ps(v[0][0], v[0][1], v[1][0], v[1][1]);
+			swz[2] = _mms_setr_ps(v[0][3], v[0][3], v[1][3], v[1][3]);
+			swz[1] = _mms_setr_ps(v[2][0], v[2][1], v[3][0], v[3][1]);
+			swz[3] = _mms_setr_ps(v[2][2], v[2][3], v[3][2], v[3][3]);
+
+			//l1ght : store four vertices xyw value
+			vtxX[i] = _mms_setr_ps(swz[0][0], swz[0][2], swz[1][0], swz[1][2]);
+			vtxY[i] = _mms_setr_ps(swz[0][1], swz[0][3], swz[1][1], swz[1][3]);
+			vtxW[i] = _mms_setr_ps(swz[2][1], swz[2][3], swz[3][1], swz[3][3]);
+#else
 			swz[0] = _mmw_shuffle_ps(v[0], v[1], 0x44);
 			swz[2] = _mmw_shuffle_ps(v[0], v[1], 0xEE);
 			swz[1] = _mmw_shuffle_ps(v[2], v[3], 0x44);
 			swz[3] = _mmw_shuffle_ps(v[2], v[3], 0xEE);
 
+			//l1ght : store four vertices xyw value
 			vtxX[i] = _mmw_shuffle_ps(swz[0], swz[1], 0x88);
 			vtxY[i] = _mmw_shuffle_ps(swz[0], swz[1], 0xDD);
 			vtxW[i] = _mmw_shuffle_ps(swz[2], swz[3], 0xDD);
+#endif
 		}
 	}
 
@@ -716,7 +793,7 @@ else
 	// Rasterization functions
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	FORCE_INLINE void ComputeBoundingBox(__mwi &bbminX, __mwi &bbminY, __mwi &bbmaxX, __mwi &bbmaxY, const __mw *vX, const __mw *vY, const ScissorRect *scissor)
+	FORCE_INLINE void ComputeBoundingBox(__mwi& bbminX, __mwi& bbminY, __mwi& bbmaxX, __mwi& bbmaxY, const __mw* vX, const __mw* vY, const ScissorRect* scissor)
 	{
 		static const __mwi SIMD_PAD_W_MASK = _mmw_set1_epi32(~(TILE_WIDTH - 1));
 		static const __mwi SIMD_PAD_H_MASK = _mmw_set1_epi32(~(TILE_HEIGHT - 1));
@@ -741,7 +818,7 @@ else
 	}
 
 #if PRECISE_COVERAGE != 0
-	FORCE_INLINE void SortVertices(__mwi *vX, __mwi *vY)
+	FORCE_INLINE void SortVertices(__mwi* vX, __mwi* vY)
 	{
 		// Rotate the triangle in the winding order until v0 is the vertex with lowest Y value
 		for (int i = 0; i < 2; i++)
@@ -761,7 +838,7 @@ else
 		}
 	}
 
-	FORCE_INLINE int CullBackfaces(__mwi *ipVtxX, __mwi *ipVtxY, __mw *pVtxX, __mw *pVtxY, __mw *pVtxZ, const __mw &ccwMask, BackfaceWinding bfWinding)
+	FORCE_INLINE int CullBackfaces(__mwi* ipVtxX, __mwi* ipVtxY, __mw* pVtxX, __mw* pVtxY, __mw* pVtxZ, const __mw& ccwMask, BackfaceWinding bfWinding)
 	{
 		// Reverse vertex order if non cw faces are considered front facing (rasterizer code requires CCW order)
 		if (!(bfWinding & BACKFACE_CW))
@@ -789,7 +866,7 @@ else
 		return ((bfWinding & BACKFACE_CCW) ? 0 : _mmw_movemask_ps(ccwMask)) | ((bfWinding & BACKFACE_CW) ? 0 : ~_mmw_movemask_ps(ccwMask));
 	}
 #else
-	FORCE_INLINE void SortVertices(__mw *vX, __mw *vY)
+	FORCE_INLINE void SortVertices(__mw* vX, __mw* vY)
 	{
 		// Rotate the triangle in the winding order until v0 is the vertex with lowest Y value
 		for (int i = 0; i < 2; i++)
@@ -806,10 +883,11 @@ else
 			vY[0] = _mmw_blendv_ps(vY[0], vY[1], swapMask);
 			vY[1] = _mmw_blendv_ps(vY[1], vY[2], swapMask);
 			vY[2] = sY;
+
 		}
 	}
 
-	FORCE_INLINE int CullBackfaces(__mw *pVtxX, __mw *pVtxY, __mw *pVtxZ, const __mw &ccwMask, BackfaceWinding bfWinding)
+	FORCE_INLINE int CullBackfaces(__mw* pVtxX, __mw* pVtxY, __mw* pVtxZ, const __mw& ccwMask, BackfaceWinding bfWinding)
 	{
 		// Reverse vertex order if non cw faces are considered front facing (rasterizer code requires CCW order)
 		if (!(bfWinding & BACKFACE_CW))
@@ -831,7 +909,7 @@ else
 	}
 #endif
 
-	FORCE_INLINE void ComputeDepthPlane(const __mw *pVtxX, const __mw *pVtxY, const __mw *pVtxZ, __mw &zPixelDx, __mw &zPixelDy) const
+	FORCE_INLINE void ComputeDepthPlane(const __mw* pVtxX, const __mw* pVtxY, const __mw* pVtxZ, __mw& zPixelDx, __mw& zPixelDy) const
 	{
 		// Setup z(x,y) = z0 + dx*x + dy*y screen space depth plane equation
 		__mw x2 = _mmw_sub_ps(pVtxX[2], pVtxX[0]);
@@ -845,15 +923,260 @@ else
 		zPixelDy = _mmw_mul_ps(_mmw_fmsub_ps(x1, z2, _mmw_mul_ps(z1, x2)), d);
 	}
 
-	FORCE_INLINE void UpdateTileQuick(int tileIdx, const __mwi &coverage, const __mw &zTriv)
+	FORCE_INLINE void UpdateTileQuick1(int tileIdx, const __mwi& coverage, const __mw& zTriv)
 	{
 		// Update heuristic used in the paper "Masked Software Occlusion Culling", 
 		// good balance between performance and accuracy
 		STATS_ADD(mStats.mOccluders.mNumTilesUpdated, 1);
-		assert(tileIdx >= 0 && tileIdx < mTilesWidth*mTilesHeight);
+		assert(tileIdx >= 0 && tileIdx < mTilesWidth* mTilesHeight);
+
+		//l1ght quick : mask == 0 indicates no zMin[1]
+		__mwi mask = mMaskedHiZBuffer[tileIdx].mMask;
+		__mw* zMin = mMaskedHiZBuffer[tileIdx].mZMin;
+
+		// Swizzle coverage mask to 8x4 subtiles and test if any subtiles are not covered at all
+		//l1ght quick :! coverage is in 8x4 subtiles but not 32x1 lines for per float
+		__mwi rastMask = coverage;
+		//l1ght quick : -1 which stands for true in _mmw_cmpeq_epi32 means dead already
+		__mwi deadLane = _mmw_cmpeq_epi32(rastMask, SIMD_BITS_ZERO);
+
+		// f//printf(fptr, "UpdateTileQuick: check 1 ++++++++++++++++++++++++++++++++++++++++\n");
+		// f//printf(fptr, "mask: "); //print_simd(mask);
+		// f//printf(fptr, "coverage: "); //print_simd(coverage);
+		// f//printf(fptr, "zMin: "); //print_simd(*zMin);
+		// f//printf(fptr, "rastMask: "); //print_simd(rastMask);
+		// f//printf(fptr, "deadLane: "); //print_simd(deadLane);
+
+		//l1ght quick : sign 0 and 1 are indicating the relations between min, triangle, and max
+		__mwi sign0 = _mmw_srai_epi32(simd_cast<__mwi>(_mmw_sub_ps(zMin[0], zTriv)), 31);
+		__mwi sign1 = _mmw_srai_epi32(simd_cast<__mwi>(_mmw_sub_ps(zTriv, zMin[1])), 31);
+		//l1ght quick : layerMask0 indicates where current rastMask intersects with last mask
+		__mwi layerMask0 = _mmw_andnot_epi32(rastMask, _mmw_not_epi32(mask));
+		//l1ght quick : sign0 & sign1 > 0 -> zMin[0] < zTriv < zMin[1]
+		//l1ght quick : & where current rastMask is new
+		__mwi lm0 = _mmw_and_epi32(_mmw_cmpeq_epi32(layerMask0, SIMD_BITS_ZERO), _mmw_and_epi32(sign0, sign1));
+
+		// Mask out all subtiles failing the depth test (don't update these subtiles)
+		//l1ght quick : simd_cast<__mwi>(_mmw_sub_ps(zTriv, zMin[0])), 31) -> the sign of difference of depths
+		//l1ghtodo quick : no early out, consider optimizing? or must early out outside?
+		deadLane = _mmw_or_epi32(deadLane, _mmw_srai_epi32(simd_cast<__mwi>(_mmw_sub_ps(zTriv, zMin[0])), 31));
+		//l1ght quick :! deadLane(-1) means all bits are 1 in two's complement
+		rastMask = _mmw_andnot_epi32(deadLane, rastMask);
+
+		// Use distance heuristic to discard layer 1 if incoming triangle is significantly nearer to observer
+		// than the buffer contents. See Section 3.2 in "Masked Software Occlusion Culling"
+		//l1ght quick : coveredLane -> not dead and cover whole 8x4 pixels
+		__mwi coveredLane = _mmw_cmpeq_epi32(rastMask, SIMD_BITS_ONE);
+		// f//printf(fptr, "coveredLane"); //print_simd(coveredLane);
+		// f//printf(fptr, "zMin 0: "); //print_simd(zMin[0]);
+		// f//printf(fptr, "zMin 1: "); //print_simd(zMin[1]);
+		// f//printf(fptr, "zMin 1: "); //print_simd(simd_cast<__mwi>(zMin[1]));
+		// f//printf(fptr, "zTriv: "); //print_simd(zTriv);
+		//__mw diff0 = _mmw_srai_epi32(simd_cast<__mwi>zMin[1])
+		//__mw diff = _mmw_sub_ps(_mmw_mul_ps(zMin[1], _mmw_set1_ps(2.0f)), _mmw_add_ps(zTriv, zMin[0]));// 
+		//l1ght quick : the closer(bigger) zTriv diff is more likely to be -1
+
+
+		//-------------------------------------------------------------------------------------------------------------
+		//__mw diff = _mmw_fmsub_ps(zMin[1], _mmw_set1_ps(2.0f), _mmw_add_ps(zTriv, zMin[0]));
+		//__mwi discardLayerMask = _mmw_andnot_epi32(deadLane, _mmw_or_epi32(_mmw_srai_epi32(simd_cast<__mwi>(diff), 31), coveredLane));
+
+		//// Update the mask with incoming triangle coverage
+		//mask = _mmw_or_epi32(_mmw_andnot_epi32(discardLayerMask, mask), rastMask);
+
+		//__mwi maskFull = _mmw_cmpeq_epi32(mask, SIMD_BITS_ONE);
+
+		//// Compute new value for zMin[1]. This has one of four outcomes: zMin[1] = min(zMin[1], zTriv),  zMin[1] = zTriv, 
+		//// zMin[1] = FLT_MAX or unchanged, depending on if the layer is updated, discarded, fully covered, or not updated
+		//__mw opA = _mmw_blendv_ps(zTriv, zMin[1], simd_cast<__mw>(deadLane));
+		//__mw opB = _mmw_blendv_ps(zMin[1], zTriv, simd_cast<__mw>(discardLayerMask));
+		//__mw z1min = _mmw_min_ps(opA, opB);
+		//zMin[1] = _mmw_blendv_ps(z1min, _mmw_set1_ps(FLT_MAX), simd_cast<__mw>(maskFull));
+
+		//// Propagate zMin[1] back to zMin[0] if tile was fully covered, and update the mask
+		//zMin[0] = _mmw_blendv_ps(zMin[0], z1min, simd_cast<__mw>(maskFull));
+		//mMaskedHiZBuffer[tileIdx].mMask = _mmw_andnot_epi32(maskFull, mask);
+
+		__mw diff = _mmw_fmsub_ps(zMin[1], _mmw_set1_ps(2.0f), _mmw_add_ps(zTriv, zMin[0]));
+		//__mw diff = _mmw_sub_ps(_mmw_add_ps(zMin[1], _mmw_set1_ps(0.01f)), zTriv);
+
+		//printf("UpdateTileQuick discardLayerMask check: "); //print_simd(coveredLane); //print_simd(diff);
+		//__mwi discardLayerMaskR = _mmw_or_epi32(_mmw_srai_epi32(simd_cast<__mwi>(diff), 31), coveredLane);
+		// f//printf(fptr, "deadLane 2: "); //print_simd(deadLane);
+		//l1ght quick : (for a lane(8x4)) not dead and diff is negative (zTriv is closer(bigger) enough) means need updated
+		__mwi discardLayerMask = _mmw_andnot_epi32(deadLane, _mmw_or_epi32(_mmw_srai_epi32(simd_cast<__mwi>(diff), 31), coveredLane));
+		// f//printf(fptr, "discardLayerMask: "); //print_simd(discardLayerMask);
+		// Update the mask with incoming triangle coverage
+
+		//l1ght quick : rastMAsk current mask and original mask with currently need updating mask excluded
+		//l1ght quick : calculate new mask
+		//l1ght quick trace :! if not discarded (discardLayerMask is false) hence mask remained and blend to rastMask with smaller z1min
+		//l1ght opt : make mask blend to 
+		mask = _mmw_or_epi32(_mmw_andnot_epi32(discardLayerMask, mask), rastMask);
+		__mwi coverAll = _mmw_cmpeq_epi32(_mmw_or_epi32(mask, mMaskedHiZBuffer[tileIdx].mMask), SIMD_BITS_ONE);
+
+		// f//printf(fptr, "mask for update: "); //print_simd(mask); 
+		// f//printf(fptr, "rast mask: "); //print_simd(rastMask); 
+		// f//printf(fptr, "discardLayerMask: "); //print_simd(discardLayerMask);
+
+		//l1ght quick : maskFull -> is all masked by current rastMask, there are early depth test so will not be updated wrongly
+		//l1ght quick : should already include the coveredLane
+		__mwi maskFull = _mmw_cmpeq_epi32(mask, SIMD_BITS_ONE);
+		//_mmw_andnot_epi(maskFull, lm0) -> mask = 
+		// f//printf(fptr, "maskFull: "); //print_simd(maskFull);
+
+		// Compute new value for zMin[1]. This has one of four outcomes: zMin[1] = min(zMin[1], zTriv),  zMin[1] = zTriv, 
+		// zMin[1] = FLT_MAX or unchanged, depending on if the layer is updated, discarded, fully covered, or not updated
+		__mw opA = _mmw_blendv_ps(zTriv, zMin[1], simd_cast<__mw>(deadLane));
+		//l1ght : if discardLayerMask then use zTriv
+		__mw opB = _mmw_blendv_ps(zMin[1], zTriv, simd_cast<__mw>(discardLayerMask));
+		//l1ght quick : z1min may be degraded(less than current) when mask blended
+		__mw z1min = _mmw_min_ps(opA, opB);
+		//z1min =  _mmw_blendv_ps(z1min, zMin[1], simd_cast<__mw>(lm0));
+		__mw z1minX = zMin[1];
+
+		zMin[1] = _mmw_blendv_ps(z1min, _mmw_set1_ps(FLT_MAX), simd_cast<__mw>(maskFull));
+		zMin[1] = _mmw_blendv_ps(zMin[1], z1minX, simd_cast<__mw>(lm0));
+
+		// Propagate zMin[1] back to zMin[0] if tile was fully covered, and update the mask
+		//zMin[0] = _mmw_blendv_ps(z1min, zMin[0], simd_cast<__mw>(lm0));
+		zMin[0] = _mmw_blendv_ps(zMin[0], z1min, simd_cast<__mw>(maskFull));
+		zMin[0] = _mmw_blendv_ps(zMin[0], zTriv, simd_cast<__mw>(lm0));
+
+		//l1ght quick : mask is for zMin[1] and when no zMin[1] it is zero otherwise mask calculated
+		//maskFull = _mmw_and_epi32(maskFull, lm0);
+		mMaskedHiZBuffer[tileIdx].mMask = _mmw_blendv_epi32(_mmw_andnot_epi32(maskFull, mask), mMaskedHiZBuffer[tileIdx].mMask, lm0);
+		//mMaskedHiZBuffer[tileIdx].mMask = _mmw_andnot_epi32(maskFull, mask);
+
+		////printf("check end ---------------------------------------\n");
+	}
+
+#if MOC_SUPPORT_DELAY
+	float zTrivArr[SIMD_LANES];
+	unsigned int coverageArr[SIMD_LANES];
+	FORCE_INLINE void UpdateTileDelay(int tileIdx, const __mwi& coverage, const __mw& zTriv)
+	{
+		int indTile = tileIdx * delaySize * SIMD_LANES;
+		int indCounter = tileIdx * SIMD_LANES;
+		//float* zTrivArr = reinterpret_cast<float*>(const_cast<__mw*>(&zTriv));
+		//unsigned int* coverageArr = reinterpret_cast<unsigned int*>(const_cast<__mwi*>(&coverage));
+		_mmw_storeu_ps(zTrivArr, zTriv);
+		_mmw_storeu_epi32(coverageArr, coverage);
+		for (int laneInd = 0; laneInd < SIMD_LANES; laneInd++)
+		{
+			if (mCounterBuffer[indCounter + laneInd] < delaySize)
+			{
+				int offDelay = mCounterBuffer[indCounter + laneInd] * SIMD_LANES + laneInd;
+				if (coverageArr[laneInd] > 0)
+				{
+					mMaskBuffer[indTile + offDelay] = coverageArr[laneInd];
+					mZBuffer[indTile + offDelay] = zTrivArr[laneInd];
+				}
+				else
+				{
+					mMaskBuffer[indTile + offDelay] = 0;
+				}
+				mCounterBuffer[indCounter + laneInd]++;
+			}
+		}
+	}
+	//int offLane;
+	//int SortTileDelay(int a, int b)
+	//{
+	//	return mZBuffer[offLane + SIMD_LANES * a] < mZBuffer[offLane + SIMD_LANES * b];
+	//}
+	// Functor that captures a pointer
+	struct SortTileDelay {
+	public:
+		int offLane;
+		float* mZBuffer;
+		bool operator()(int a, int b) const {
+			//return mZBuffer[offLane + SIMD_LANES * a] < mZBuffer[offLane + SIMD_LANES * b];
+			return a < b;
+		}
+	}sortTileDelay;
+	FORCE_INLINE void ExecuteTileDelay()
+	{
+		int tileSize = mTilesWidth * mTilesHeight;
+		//std::vector<int> indices(delaySize);
+		for (int tileInd = 0; tileInd < tileSize; tileInd++)
+		{
+			int offTile = tileInd * SIMD_LANES * delaySize;
+			int offTileCounter = tileInd * SIMD_LANES;
+			int maxSize = 0;
+			//mMaskedHiZBuffer[i] = 
+			for (int laneInd = 0; laneInd < SIMD_LANES; laneInd++)
+			{
+				int offLaneCounter = offTileCounter + laneInd;
+				int counterSize = mCounterBuffer[offLaneCounter];
+				for (int delayInd = 0; delayInd < counterSize; delayInd++)
+				{
+					indices[delayInd] = delayInd;
+					reindices[delayInd] = delayInd;
+				}
+				int offLane = offTile + laneInd;
+				sortTileDelay.offLane = offLane;
+				sortTileDelay.mZBuffer = mZBuffer;
+				//std::sort(indices.begin(), indices.begin() + counterSize, sortTileDelay);
+				std::sort(indices, indices + counterSize, //sortTileDelay
+					[this, offLane](int a, int b) {
+					return mZBuffer[offLane + SIMD_LANES * a] > mZBuffer[offLane + SIMD_LANES * b];
+				}
+				);
+				for (size_t delayInd = 0; delayInd < counterSize; ++delayInd) {
+					//int offLane = offTile + laneInd * delaySize;
+					int current = indices[delayInd];
+					while (reindices[current] != current)
+					{
+						current = reindices[current];
+					}
+					if (delayInd != current)
+					{
+						std::swap(mZBuffer[delayInd * SIMD_LANES + offLane], mZBuffer[current * SIMD_LANES + offLane]);
+						std::swap(mMaskBuffer[delayInd * SIMD_LANES + offLane], mMaskBuffer[current * SIMD_LANES + offLane]);
+						reindices[delayInd] = current;
+					}
+				}
+				if (counterSize == 2) printf("%f.4 %f.4 \n", mZBuffer[offLane], mZBuffer[offLane + SIMD_LANES]);
+				maxSize = std::max(counterSize, maxSize);
+			}
+
+			__mwi mask = _mmw_setzero_epi32();
+			__mw zMin0 = _mmw_set1_ps(-1.0f); //set to -1.0f to avoid;
+			__mw zMin1 = _mmw_set1_ps(-1.0f);
+			for (int counterInd = 0; counterInd < maxSize; counterInd++)
+			{
+				//update one tile
+				//__mw* zTriv = reinterpret_cast<__mw*>(mZBuffer + offTile);
+				//__mwi* coverage = reinterpret_cast<__mwi*>(mMaskBuffer + offTile);
+				__mw zTriv = _mmw_loadu_ps(mZBuffer + offTile + counterInd * SIMD_LANES);
+				__mwi coverage = _mmw_loadu_epi32(mMaskBuffer + offTile + counterInd * SIMD_LANES);
+				__mwi deadLane = simd_cast<__mwi>(_mmw_cmpneq_ps(zMin0, _mmw_set1_ps(-1.0f))); //zMin0 is only updated when fullLane
+				__mwi maskNow = _mmw_or_epi32(mask, coverage);
+				deadLane = _mmw_or_epi32(_mmw_cmpeq_epi32(maskNow, mask), deadLane); //cliped
+				__mwi fullLane = _mmw_cmpeq_epi32(maskNow, SIMD_BITS_ONE);
+				zMin0 = _mmw_blendv_ps(zMin0, zTriv, simd_cast<__mw>(_mmw_andnot_epi32(deadLane, fullLane)));
+				__mw op1 = _mmw_blendv_ps(zTriv, _mmw_max_ps(zMin1, zTriv), simd_cast<__mw>(fullLane));
+				zMin1 = _mmw_blendv_ps(op1, zMin1, simd_cast<__mw>(deadLane));
+				mask = _mmw_blendv_epi32(maskNow, mask, _mmw_or_epi32(deadLane, fullLane));
+			}
+			mMaskedHiZBuffer[tileInd].mMask = mask;
+			mMaskedHiZBuffer[tileInd].mZMin[0] = zMin0;
+			mMaskedHiZBuffer[tileInd].mZMin[1] = zMin1;
+		}
+
+	}
+#endif
+
+	FORCE_INLINE void UpdateTileQuick(int tileIdx, const __mwi& coverage, const __mw& zTriv)
+	{
+		// Update heuristic used in the paper "Masked Software Occlusion Culling", 
+		// good balance between performance and accuracy
+		STATS_ADD(mStats.mOccluders.mNumTilesUpdated, 1);
+		assert(tileIdx >= 0 && tileIdx < mTilesWidth* mTilesHeight);
 
 		__mwi mask = mMaskedHiZBuffer[tileIdx].mMask;
-		__mw *zMin = mMaskedHiZBuffer[tileIdx].mZMin;
+		__mw* zMin = mMaskedHiZBuffer[tileIdx].mZMin;
 
 		// Swizzle coverage mask to 8x4 subtiles and test if any subtiles are not covered at all
 		__mwi rastMask = coverage;
@@ -862,11 +1185,13 @@ else
 		// Mask out all subtiles failing the depth test (don't update these subtiles)
 		deadLane = _mmw_or_epi32(deadLane, _mmw_srai_epi32(simd_cast<__mwi>(_mmw_sub_ps(zTriv, zMin[0])), 31));
 		rastMask = _mmw_andnot_epi32(deadLane, rastMask);
+		//l1ght : deadLane == zTriv < zMin[0] || not rastMask
 
 		// Use distance heuristic to discard layer 1 if incoming triangle is significantly nearer to observer
 		// than the buffer contents. See Section 3.2 in "Masked Software Occlusion Culling"
 		__mwi coveredLane = _mmw_cmpeq_epi32(rastMask, SIMD_BITS_ONE);
 		__mw diff = _mmw_fmsub_ps(zMin[1], _mmw_set1_ps(2.0f), _mmw_add_ps(zTriv, zMin[0]));
+		//l1ght :! "discard" means the original mask need to be discarded
 		__mwi discardLayerMask = _mmw_andnot_epi32(deadLane, _mmw_or_epi32(_mmw_srai_epi32(simd_cast<__mwi>(diff), 31), coveredLane));
 
 		// Update the mask with incoming triangle coverage
@@ -883,15 +1208,16 @@ else
 
 		// Propagate zMin[1] back to zMin[0] if tile was fully covered, and update the mask
 		zMin[0] = _mmw_blendv_ps(zMin[0], z1min, simd_cast<__mw>(maskFull));
+		//maskFull 全为1 用not mask
 		mMaskedHiZBuffer[tileIdx].mMask = _mmw_andnot_epi32(maskFull, mask);
 	}
 
-	FORCE_INLINE void UpdateTileAccurate(int tileIdx, const __mwi &coverage, const __mw &zTriv)
+	FORCE_INLINE void UpdateTileAccurate(int tileIdx, const __mwi& coverage, const __mw& zTriv)
 	{
-		assert(tileIdx >= 0 && tileIdx < mTilesWidth*mTilesHeight);
+		assert(tileIdx >= 0 && tileIdx < mTilesWidth* mTilesHeight);
 
-		__mw *zMin = mMaskedHiZBuffer[tileIdx].mZMin;
-		__mwi &mask = mMaskedHiZBuffer[tileIdx].mMask;
+		__mw* zMin = mMaskedHiZBuffer[tileIdx].mZMin;
+		__mwi& mask = mMaskedHiZBuffer[tileIdx].mMask;
 
 		// Swizzle coverage mask to 8x4 subtiles
 		__mwi rastMask = coverage;
@@ -899,8 +1225,11 @@ else
 		// Perform individual depth tests with layer 0 & 1 and mask out all failing pixels 
 		__mw sdist0 = _mmw_sub_ps(zMin[0], zTriv);
 		__mw sdist1 = _mmw_sub_ps(zMin[1], zTriv);
+		//l1ght acc : sign0 == zMin0 < zTriv 越近越大
 		__mwi sign0 = _mmw_srai_epi32(simd_cast<__mwi>(sdist0), 31);
+		//l1ght acc : sign1 == zMin1 < zTriv
 		__mwi sign1 = _mmw_srai_epi32(simd_cast<__mwi>(sdist1), 31);
+		//l1ght acc : filter rastMask by sign0(zTriv closer to 0) and sign1(zTriv closer to 1)
 		__mwi triMask = _mmw_and_epi32(rastMask, _mmw_or_epi32(_mmw_andnot_epi32(mask, sign0), _mmw_and_epi32(mask, sign1)));
 
 		// Early out if no pixels survived the depth test (this test is more accurate than
@@ -915,6 +1244,7 @@ else
 		__mw zTri = _mmw_blendv_ps(zTriv, zMin[0], simd_cast<__mw>(t0));
 
 		// Test if incoming triangle completely overwrites layer 0 or 1
+		//l1ght acc : not triMask means not covered and with either == 0 -> means cover by other one
 		__mwi layerMask0 = _mmw_andnot_epi32(triMask, _mmw_not_epi32(mask));
 		__mwi layerMask1 = _mmw_andnot_epi32(triMask, mask);
 		__mwi lm0 = _mmw_cmpeq_epi32(layerMask0, SIMD_BITS_ZERO);
@@ -945,6 +1275,7 @@ else
 
 		// Update mask based on which layer the triangle overwrites or was merged into
 		__mw inner = _mmw_blendv_ps(simd_cast<__mw>(triMask), simd_cast<__mw>(layerMask1), simd_cast<__mw>(d0min));
+		//l1ght acc : mask stands for z1 so the same as following z1 three outcomes: keep current value(layerMask0), overwrite with zTri(triMask), overwrite with z1(layerMask1)
 		mask = simd_cast<__mwi>(_mmw_blendv_ps(inner, simd_cast<__mw>(layerMask0), simd_cast<__mw>(d1min)));
 
 		// Update the zMin[0] value. There are four outcomes: overwrite with layer 1,
@@ -964,7 +1295,9 @@ else
 	FORCE_INLINE int TraverseScanline(int leftOffset, int rightOffset, int tileIdx, int rightEvent, int leftEvent, const __mwi *events, const __mw &zTriMin, const __mw &zTriMax, const __mw &iz0, float zx)
 	{
 		// Floor edge events to integer pixel coordinates (shift out fixed point bits)
+		//l1ght rast ： leftOffset 是整数个tile / 像素数据都保存在event里了
 		int eventOffset = leftOffset << TILE_WIDTH_SHIFT;
+		//l1ght rast : 每个left可以代表4/8/16个整数位
 		__mwi right[NRIGHT], left[NLEFT];
 		for (int i = 0; i < NRIGHT; ++i)
 			right[i] = _mmw_max_epi32(_mmw_sub_epi32(_mmw_srai_epi32(events[rightEvent + i], FP_BITS), _mmw_set1_epi32(eventOffset)), SIMD_BITS_ZERO);
@@ -1000,6 +1333,7 @@ else
 			if (_mmw_movemask_ps(dist0) != SIMD_ALL_LANES_MASK)
 			{
 				// Compute coverage mask for entire 32xN using shift operations
+				//l1ght rast : init by ~0 left shift left[0] bits
 				__mwi accumulatedMask = _mmw_sllv_ones(left[0]);
 				for (int i = 1; i < NLEFT; ++i)
 					accumulatedMask = _mmw_and_epi32(accumulatedMask, _mmw_sllv_ones(left[i]));
@@ -1023,6 +1357,12 @@ else
 				{
 					// Compute interpolated min for each 8x4 subtile and update the masked hierarchical z buffer entry
 					__mw zSubTileMin = _mmw_max_ps(z0, zTriMin);
+					//l1ght quick : transpose to get 8x4 subtile instead of 32x1 line
+#if MOC_SUPPORT_DELAY
+					if (delayMask)
+						UpdateTileDelay(tileIdx, _mmw_transpose_epi8(accumulatedMask), zSubTileMin);
+					else 
+#endif
 					if (mQuickMask)
 						UpdateTileQuick(tileIdx, _mmw_transpose_epi8(accumulatedMask), zSubTileMin);
 					else
@@ -1031,8 +1371,9 @@ else
 			}
 
 			// Update buffer address, interpolate z and edge events
-			tileIdx++;
-			if (tileIdx >= tileIdxEnd)
+			//l1ght rast : 这里是每一行++ 可以用这个记录多少个tile被更新了。
+			tileIdx++; 
+			if (tileIdx >= tileIdxEnd) //l1ght111
 				break;
 			z0 = _mmw_add_ps(z0, _mmw_set1_ps(zx));
 			for (int i = 0; i < NRIGHT; ++i)
@@ -1044,12 +1385,11 @@ else
 		return TEST_Z ? CullingResult::OCCLUDED : CullingResult::VISIBLE;
 	}
 
-
 	template<int TEST_Z, int TIGHT_TRAVERSAL, int MID_VTX_RIGHT>
 #if PRECISE_COVERAGE != 0
-	FORCE_INLINE int RasterizeTriangle(unsigned int triIdx, int bbWidth, int tileRowIdx, int tileMidRowIdx, int tileEndRowIdx, const __mwi *eventStart, const __mw *slope, const __mwi *slopeTileDelta, const __mw &zTriMin, const __mw &zTriMax, __mw &z0, float zx, float zy, const __mwi *edgeY, const __mwi *absEdgeX, const __mwi *slopeSign, const __mwi *eventStartRemainder, const __mwi *slopeTileRemainder)
+	FORCE_INLINE int RasterizeTriangle(unsigned int triIdx, int bbWidth, int tileRowIdx, int tileMidRowIdx, int tileEndRowIdx, const __mwi* eventStart, const __mw* slope, const __mwi* slopeTileDelta, const __mw& zTriMin, const __mw& zTriMax, __mw& z0, float zx, float zy, const __mwi* edgeY, const __mwi* absEdgeX, const __mwi* slopeSign, const __mwi* eventStartRemainder, const __mwi* slopeTileRemainder)
 #else
-	FORCE_INLINE int RasterizeTriangle(unsigned int triIdx, int bbWidth, int tileRowIdx, int tileMidRowIdx, int tileEndRowIdx, const __mwi *eventStart, const __mwi *slope, const __mwi *slopeTileDelta, const __mw &zTriMin, const __mw &zTriMax, __mw &z0, float zx, float zy)
+	FORCE_INLINE int RasterizeTriangle(unsigned int triIdx, int bbWidth, int tileRowIdx, int tileMidRowIdx, int tileEndRowIdx, const __mwi* eventStart, const __mwi* slope, const __mwi* slopeTileDelta, const __mw& zTriMin, const __mw& zTriMax, __mw& z0, float zx, float zy)
 #endif
 	{
 		if (TEST_Z)
@@ -1060,9 +1400,9 @@ else
 		int cullResult;
 
 #if PRECISE_COVERAGE != 0
-		#define LEFT_EDGE_BIAS -1
-		#define RIGHT_EDGE_BIAS 1
-		#define UPDATE_TILE_EVENTS_Y(i) \
+#define LEFT_EDGE_BIAS -1
+#define RIGHT_EDGE_BIAS 1
+#define UPDATE_TILE_EVENTS_Y(i) \
 				triEventRemainder[i] = _mmw_sub_epi32(triEventRemainder[i], triSlopeTileRemainder[i]); \
 				__mwi overflow##i = _mmw_srai_epi32(triEventRemainder[i], 31); \
 				triEventRemainder[i] = _mmw_add_epi32(triEventRemainder[i], _mmw_and_epi32(overflow##i, triEdgeY[i])); \
@@ -1091,9 +1431,9 @@ else
 		}
 
 #else
-		#define LEFT_EDGE_BIAS 0
-		#define RIGHT_EDGE_BIAS 0
-		#define UPDATE_TILE_EVENTS_Y(i)		triEvent[i] = _mmw_add_epi32(triEvent[i], triSlopeTileDelta[i]);
+#define LEFT_EDGE_BIAS 0
+#define RIGHT_EDGE_BIAS 0
+#define UPDATE_TILE_EVENTS_Y(delayInd)		triEvent[delayInd] = _mmw_add_epi32(triEvent[delayInd], triSlopeTileDelta[delayInd]);
 
 		// Get deltas used to increment edge events each time we traverse one scanline of tiles
 		__mwi triSlopeTileDelta[3];
@@ -1128,10 +1468,12 @@ else
 		if (tileRowIdx <= tileMidRowIdx)
 		{
 			int tileStopIdx = min(tileEndRowIdx, tileMidRowIdx);
+			//l1ght rast : 下半截 tileRowIdx 是id 从0开始 +60表示一行(1920 / 32 == 60)
 			// Traverse the bottom half of the triangle
 			while (tileRowIdx < tileStopIdx)
 			{
 				int start = 0, end = bbWidth;
+
 				if (TIGHT_TRAVERSAL)
 				{
 					// Compute tighter start and endpoints to avoid traversing empty space
@@ -1154,6 +1496,7 @@ else
 				UPDATE_TILE_EVENTS_Y(2);
 			}
 
+			//l1ght rast : 中间行
 			// Traverse the middle scanline of tiles. We must consider all three edges only in this region
 			if (tileRowIdx < tileEndRowIdx)
 			{
@@ -1185,6 +1528,7 @@ else
 				tileRowIdx += mTilesWidth;
 			}
 
+			//l1ght rast : 上半截
 			// Traverse the top half of the triangle
 			if (tileRowIdx < tileEndRowIdx)
 			{
@@ -1272,9 +1616,9 @@ else
 
 	template<bool TEST_Z>
 #if PRECISE_COVERAGE != 0
-	FORCE_INLINE int RasterizeTriangleBatch(__mwi ipVtxX[3], __mwi ipVtxY[3], __mw pVtxX[3], __mw pVtxY[3], __mw pVtxZ[3], unsigned int triMask, const ScissorRect *scissor)
+	FORCE_INLINE int RasterizeTriangleBatch(__mwi ipVtxX[3], __mwi ipVtxY[3], __mw pVtxX[3], __mw pVtxY[3], __mw pVtxZ[3], unsigned int triMask, const ScissorRect* scissor)
 #else
-	FORCE_INLINE int RasterizeTriangleBatch(__mw pVtxX[3], __mw pVtxY[3], __mw pVtxZ[3], unsigned int triMask, const ScissorRect *scissor)
+	FORCE_INLINE int RasterizeTriangleBatch(__mw pVtxX[3], __mw pVtxY[3], __mw pVtxZ[3], unsigned int triMask, const ScissorRect* scissor)
 #endif
 	{
 		int cullResult = CullingResult::VIEW_CULLED;
@@ -1284,17 +1628,21 @@ else
 		//////////////////////////////////////////////////////////////////////////////
 
 		__mwi bbPixelMinX, bbPixelMinY, bbPixelMaxX, bbPixelMaxY;
+		//printf("pVtxX %d: ", scissor->mMaxX);  print_simd(pVtxX[0]);
+		//l1ght rast : bouding box in pixel size
 		ComputeBoundingBox(bbPixelMinX, bbPixelMinY, bbPixelMaxX, bbPixelMaxY, pVtxX, pVtxY, scissor);
 
 		// Clamp bounding box to tiles (it's already padded in computeBoundingBox)
 		__mwi bbTileMinX = _mmw_srai_epi32(bbPixelMinX, TILE_WIDTH_SHIFT);
 		__mwi bbTileMinY = _mmw_srai_epi32(bbPixelMinY, TILE_HEIGHT_SHIFT);
+		//l1ght rast : 1920 / 32 = 60 so the bbTileSizeX will be 60
 		__mwi bbTileMaxX = _mmw_srai_epi32(bbPixelMaxX, TILE_WIDTH_SHIFT);
 		__mwi bbTileMaxY = _mmw_srai_epi32(bbPixelMaxY, TILE_HEIGHT_SHIFT);
 		__mwi bbTileSizeX = _mmw_sub_epi32(bbTileMaxX, bbTileMinX);
 		__mwi bbTileSizeY = _mmw_sub_epi32(bbTileMaxY, bbTileMinY);
 
-		// Cull triangles with zero bounding box
+		// Cull triangles with zero bounding box 
+		//l1ght : bbTileSizeX - 1 < 0 or bbTileSizeY - 1 < 0 => bbTileSize <= 0
 		__mwi bboxSign = _mmw_or_epi32(_mmw_sub_epi32(bbTileSizeX, _mmw_set1_epi32(1)), _mmw_sub_epi32(bbTileSizeY, _mmw_set1_epi32(1)));
 		triMask &= ~_mmw_movemask_ps(simd_cast<__mw>(bboxSign)) & SIMD_ALL_LANES_MASK;
 		if (triMask == 0x0)
@@ -1328,6 +1676,7 @@ else
 		}
 
 		// Compute Zmin and Zmax for the triangle (used to narrow the range for difficult tiles)
+		//l1ght rast : usually 1/w of z value
 		__mw zMin = _mmw_min_ps(pVtxZ[0], _mmw_min_ps(pVtxZ[1], pVtxZ[2]));
 		__mw zMax = _mmw_max_ps(pVtxZ[0], _mmw_max_ps(pVtxZ[1], pVtxZ[2]));
 
@@ -1377,7 +1726,7 @@ else
 		// Modify slope of horizontal edges to make sure they mask out pixels above/below the edge. The slope is set to screen
 		// width to mask out all pixels above or below the horizontal edge. We must also add a small bias to acount for that 
 		// vertices may end up off screen due to clipping. We're assuming that the round off error is no bigger than 1.0
-		__mw  horizontalSlopeDelta = _mmw_set1_ps(2.0f * ((float)mWidth + 2.0f*(GUARD_BAND_PIXEL_SIZE + 1.0f)));
+		__mw  horizontalSlopeDelta = _mmw_set1_ps(2.0f * ((float)mWidth + 2.0f * (GUARD_BAND_PIXEL_SIZE + 1.0f)));
 		__mwi horizontalSlope0 = _mmw_cmpeq_epi32(edgeY[0], _mmw_setzero_epi32());
 		__mwi horizontalSlope1 = _mmw_cmpeq_epi32(edgeY[1], _mmw_setzero_epi32());
 		slope[0] = _mmw_blendv_ps(slope[0], horizontalSlopeDelta, simd_cast<__mw>(horizontalSlope0));
@@ -1411,12 +1760,12 @@ else
 			__mwi tieBreaker = _mmw_blendv_epi32(_mmw_set1_epi32(0), _mmw_set1_epi32(1), tileStartDir);
 			__mwi tileStartSlope = _mmw_cvttps_epi32(_mmw_mul_ps(slope[i], _mmw_cvtepi32_ps(_mmw_neg_epi32(vy[i]))));
 			__mwi tileStartRemainder = _mmw_sub_epi32(_mmw_mullo_epi32(absEdgeX[i], _mmw_abs_epi32(vy[i])), _mmw_mullo_epi32(_mmw_abs_epi32(tileStartSlope), edgeY[i]));
-			
+
 			eventStartRemainder[i] = _mmw_sub_epi32(tileStartRemainder, tieBreaker);
 			__mwi overflow = _mmw_srai_epi32(eventStartRemainder[i], 31);
 			eventStartRemainder[i] = _mmw_add_epi32(eventStartRemainder[i], _mmw_and_epi32(overflow, edgeY[i]));
 			eventStartRemainder[i] = _mmw_blendv_epi32(eventStartRemainder[i], _mmw_sub_epi32(_mmw_sub_epi32(edgeY[i], eventStartRemainder[i]), _mmw_set1_epi32(1)), vy[i]);
-			
+
 			//eventStart[i] = xDiffi[i & 1] + tileStartSlope + (overflow & tileStartDir) + _mmw_set1_epi32(FP_HALF_PIXEL - 1) + tieBreaker;
 			eventStart[i] = _mmw_add_epi32(_mmw_add_epi32(xDiffi[i & 1], tileStartSlope), _mmw_and_epi32(overflow, tileStartDir));
 			eventStart[i] = _mmw_add_epi32(_mmw_add_epi32(eventStart[i], _mmw_set1_epi32(FP_HALF_PIXEL - 1)), tieBreaker);
@@ -1447,10 +1796,13 @@ else
 		slope[1] = _mmw_div_ps(edgeX[1], edgeY[1]);
 		slope[2] = _mmw_div_ps(edgeX[2], edgeY[2]);
 
+		//l1ght rast : slope 就是斜率 当Y为平行线的时候 会出现无穷 inf 或 -inf
+		//printf("slopes: \n"); printf(" 0:"); print_simd(slope[0]); printf(" 1:"); print_simd(slope[1]); printf(" 2:"); print_simd(slope[2]);
+
 		// Modify slope of horizontal edges to make sure they mask out pixels above/below the edge. The slope is set to screen
 		// width to mask out all pixels above or below the horizontal edge. We must also add a small bias to acount for that 
 		// vertices may end up off screen due to clipping. We're assuming that the round off error is no bigger than 1.0
-		__mw horizontalSlopeDelta = _mmw_set1_ps((float)mWidth + 2.0f*(GUARD_BAND_PIXEL_SIZE + 1.0f));
+		__mw horizontalSlopeDelta = _mmw_set1_ps((float)mWidth + 2.0f * (GUARD_BAND_PIXEL_SIZE + 1.0f));
 		slope[0] = _mmw_blendv_ps(slope[0], horizontalSlopeDelta, _mmw_cmpeq_ps(edgeY[0], _mmw_setzero_ps()));
 		slope[1] = _mmw_blendv_ps(slope[1], _mmw_neg_ps(horizontalSlopeDelta), _mmw_cmpeq_ps(edgeY[1], _mmw_setzero_ps()));
 
@@ -1490,9 +1842,9 @@ else
 		// Split bounding box into bottom - middle - top region.
 		//////////////////////////////////////////////////////////////////////////////
 
-		__mwi bbBottomIdx = _mmw_add_epi32(bbTileMinX, _mmw_mullo_epi32(bbTileMinY, _mmw_set1_epi32(mTilesWidth)));
-		__mwi bbTopIdx = _mmw_add_epi32(bbTileMinX, _mmw_mullo_epi32(_mmw_add_epi32(bbTileMinY, bbTileSizeY), _mmw_set1_epi32(mTilesWidth)));
-		__mwi bbMidIdx = _mmw_add_epi32(bbTileMinX, _mmw_mullo_epi32(midTileY, _mmw_set1_epi32(mTilesWidth)));
+		__mwi bbBottomIdx = _mmw_add_epi32(bbTileMinX, _mmw_mullo_epi32(bbTileMinY, _mmw_set1_epi32(mTilesWidth))); //l1ght rast : 0
+		__mwi bbTopIdx = _mmw_add_epi32(bbTileMinX, _mmw_mullo_epi32(_mmw_add_epi32(bbTileMinY, bbTileSizeY), _mmw_set1_epi32(mTilesWidth))); //l1ght rast : 240
+		__mwi bbMidIdx = _mmw_add_epi32(bbTileMinX, _mmw_mullo_epi32(midTileY, _mmw_set1_epi32(mTilesWidth)));  //l1ght rast : 180 第三行是中间行
 
 		//////////////////////////////////////////////////////////////////////////////
 		// Loop over non-culled triangle and change SIMD axis to per-pixel
@@ -1573,7 +1925,7 @@ else
 
 		int clipHead = 0;
 		int clipTail = 0;
-		__m128 clipTriBuffer[MAX_CLIPPED * 3];
+		__ms clipTriBuffer[MAX_CLIPPED * 3];
 		int cullResult = CullingResult::VIEW_CULLED;
 
 		const unsigned int* inTrisPtr = inTris;
@@ -1607,17 +1959,20 @@ else
 			ProjectVerticesSort(pVtxX, pVtxY, pVtxZ, pMaxZ, vtxX, vtxY, vtxW);
 #endif
 
-			// Perform backface test. 
-			__mw triArea1 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[1], pVtxX[0]), _mmw_sub_ps(pVtxY[2], pVtxY[0]));
-			__mw triArea2 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[0], pVtxX[2]), _mmw_sub_ps(pVtxY[0], pVtxY[1]));
-			__mw triArea = _mmw_sub_ps(triArea1, triArea2);
-			__mw ccwMask = _mmw_cmpgt_ps(triArea, _mmw_setzero_ps());
+			if (bfWinding != BackfaceWinding::BACKFACE_NONE)
+			{
+				// Perform backface test. 
+				__mw triArea1 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[1], pVtxX[0]), _mmw_sub_ps(pVtxY[2], pVtxY[0]));
+				__mw triArea2 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[0], pVtxX[2]), _mmw_sub_ps(pVtxY[0], pVtxY[1]));
+				__mw triArea = _mmw_sub_ps(triArea1, triArea2);
+				__mw ccwMask = _mmw_cmpgt_ps(triArea, _mmw_setzero_ps());
 
 #if PRECISE_COVERAGE != 0
-			triMask &= CullBackfaces(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
+				triMask &= CullBackfaces(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
 #else
-			triMask &= CullBackfaces(pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
+				triMask &= CullBackfaces(pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
 #endif
+			}
 
 			if (triMask == 0x0)
 				continue;
@@ -1633,43 +1988,20 @@ else
 			}
 			cached++;
 			int lastSize = nodeX.size();
-			nodeX.resize(SIMD_LANES * 3 + lastSize);
-			nodeY.resize(SIMD_LANES * 3 + lastSize);
-			nodeZ.resize(SIMD_LANES * 3 + lastSize);
+			//l1ght opt : use reserve instead, resize with shrink value may be harmful
+			//if (nodeX.size() < SIMD_LANES * 3 + lastSize)
+			{
+				nodeX.resize(SIMD_LANES * 3 + lastSize);
+				nodeY.resize(SIMD_LANES * 3 + lastSize);
+				nodeZ.resize(SIMD_LANES * 3 + lastSize);
+			}
 			for (int i = 0; i < 3; i++)
 			{
 				_mmw_storeu_ps(nodeX.data() + (lastSize + i * SIMD_LANES), pVtxX[i]);
 				_mmw_storeu_ps(nodeY.data() + (lastSize + i * SIMD_LANES), pVtxY[i]);
 				_mmw_storeu_ps(nodeZ.data() + (lastSize + i * SIMD_LANES), pVtxZ[i]);
 			}
-			printf("lastSize %d\n", lastSize);
-			{ printf("first update: %f, %f, %f\n", nodeX[lastSize + 1], nodeY[lastSize + 1], nodeZ[lastSize + 1]); }
-			{ printf("first update: %f, %f, %f\n", nodeX[lastSize + 5], nodeY[lastSize + 5], nodeZ[lastSize + 5]); }
-			{ printf("first update: %f, %f, %f\n", nodeX[lastSize + 9], nodeY[lastSize + 9], nodeZ[lastSize + 9]); }
-			//print_simd(pVtxX[0]);
-			/// </summary>
 #endif
-
-			//////////////////////////////////////////////////////////////////////////////
-			// Setup and rasterize a SIMD batch of triangles
-			//////////////////////////////////////////////////////////////////////////////
-#if PRECISE_COVERAGE != 0
-			cullResult &= RasterizeTriangleBatch<TEST_Z>(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, triMask, &mFullscreenScissor);
-#else
-			print_simd(pVtxX[0]); print_simd(pVtxY[0]); print_simd(pVtxZ[0]);
-			print_simd(pVtxX[1]); print_simd(pVtxY[1]); print_simd(pVtxZ[1]);
-			print_simd(pVtxX[2]); print_simd(pVtxY[2]); print_simd(pVtxZ[2]);
-			//cullResult &= RasterizeTriangleBatch<TEST_Z>(pVtxX, pVtxY, pVtxZ, triMask, &mFullscreenScissor);
-#endif
-
-			if (TEST_Z && cullResult == CullingResult::VISIBLE) {
-#if PRECISE_COVERAGE != 0
-				_MM_SET_ROUNDING_MODE(originalRoundingMode);
-#endif
-				return CullingResult::VISIBLE;
-			}
-
-
 			return CullingResult::VISIBLE;
 		}
 
@@ -1679,10 +2011,11 @@ else
 		return (CullingResult)cullResult;
 	}
 
-	FORCE_INLINE void RenderFlush() override
+#if MOC_SUPPORT_SORTING != 0
+	FORCE_INLINE void TriangleFlush() override
 	{
 		if (nodes.size() <= 0) return;
-		std::sort(nodes.begin(), nodes.end(), [](Node& x, Node& y)->bool{return x.maxZ > y.maxZ; });
+		std::sort(nodes.begin(), nodes.end(), [](Node& x, Node& y)->bool {return x.maxZ > y.maxZ; });
 
 		auto nSize = nodes.size();
 		auto itSize = (nSize - 1) / SIMD_LANES + 1;
@@ -1700,17 +2033,9 @@ else
 				else
 				{
 					auto& node = nodes[nInd];
-					printf("node index is: %d %d %d\n", node.index, nInd, node.index * 3);
-					//int xInd = node.index / SIMD_LANES;
-					//int xMod = node.index % SIMD_LANES;
 					for (int j = 0; j < 3; j++)
 					{
 						rawVtxX[sInd + j * SIMD_LANES] = nodeX[node.index + j * SIMD_LANES];
-						//printf("hehehehe: %d, %d, %d, %d, %f\n", j,
-						//	sInd + j * SIMD_LANES,
-						//	xInd,
-						//	xInd * SIMD_LANES * 3 + xMod + j * SIMD_LANES
-						//);
 						rawVtxY[sInd + j * SIMD_LANES] = nodeY[node.index + j * SIMD_LANES];
 						rawVtxZ[sInd + j * SIMD_LANES] = nodeZ[node.index + j * SIMD_LANES];
 					}
@@ -1723,23 +2048,24 @@ else
 				pVtxZ[j] = _mmw_loadu_ps(rawVtxZ + (j * SIMD_LANES));
 			}
 
-			printf("check raw: %f, %f, %f\n", nodeX[0], nodeY[0], nodeZ[0]);
-			printf("check raw: %f, %f, %f\n", nodeX[5], nodeY[5], nodeZ[5]);
-			printf("check raw: %f, %f, %f\n", nodeX[6], nodeY[6], nodeZ[6]);
-			
-			print_simd(pVtxX[0]); print_simd(pVtxY[0]); print_simd(pVtxZ[0]);
-			print_simd(pVtxX[1]); print_simd(pVtxY[1]); print_simd(pVtxZ[1]);
-			print_simd(pVtxX[2]); print_simd(pVtxY[2]); print_simd(pVtxZ[2]);
 			RasterizeTriangleBatch<0>(pVtxX, pVtxY, pVtxZ, triMask, &mFullscreenScissor);
 		}
 
 		nodes.resize(0);
 	}
+#endif
+
+#if MOC_SUPPORT_DELAY != 0
+	FORCE_INLINE void RenderFlush() override
+	{
+		ExecuteTileDelay();
+	}
+#endif
 
 #endif
 
 	template<int TEST_Z, int FAST_GATHER>
-	FORCE_INLINE CullingResult RenderTriangles(const float *inVtx, const unsigned int *inTris, int nTris, const float *modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout &vtxLayout)
+	FORCE_INLINE CullingResult RenderTriangles(const float* inVtx, const unsigned int* inTris, int nTris, const float* modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout& vtxLayout)
 	{
 		assert(mMaskedHiZBuffer != nullptr);
 
@@ -1755,18 +2081,19 @@ else
 
 		int clipHead = 0;
 		int clipTail = 0;
-		__m128 clipTriBuffer[MAX_CLIPPED * 3];
+		__ms clipTriBuffer[MAX_CLIPPED * 3];
 		int cullResult = CullingResult::VIEW_CULLED;
 
-		const unsigned int *inTrisPtr = inTris;
+		const unsigned int* inTrisPtr = inTris;
 		int numLanes = SIMD_LANES;
 		int triIndex = 0;
 		while (triIndex < nTris || clipHead != clipTail)
 		{
-            __mw vtxX[3], vtxY[3], vtxW[3];
-            unsigned int triMask = SIMD_ALL_LANES_MASK;
+			//l1ght clip : [3] -> three points form a triangle, __mw -> process SIMD_PANE triangles in parallel.
+			__mw vtxX[3], vtxY[3], vtxW[3];
+			unsigned int triMask = SIMD_ALL_LANES_MASK;
 
-            GatherTransformClip<FAST_GATHER>( clipHead, clipTail, numLanes, nTris, triIndex, vtxX, vtxY, vtxW, inVtx, inTrisPtr, vtxLayout, modelToClipMatrix, clipTriBuffer, triMask, clipPlaneMask );
+			GatherTransformClip<FAST_GATHER>(clipHead, clipTail, numLanes, nTris, triIndex, vtxX, vtxY, vtxW, inVtx, inTrisPtr, vtxLayout, modelToClipMatrix, clipTriBuffer, triMask, clipPlaneMask);
 
 			if (triMask == 0x0)
 				continue;
@@ -1787,17 +2114,22 @@ else
 			ProjectVertices(pVtxX, pVtxY, pVtxZ, vtxX, vtxY, vtxW);
 #endif
 
-			// Perform backface test. 
-			__mw triArea1 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[1], pVtxX[0]), _mmw_sub_ps(pVtxY[2], pVtxY[0]));
-			__mw triArea2 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[0], pVtxX[2]), _mmw_sub_ps(pVtxY[0], pVtxY[1]));
-			__mw triArea = _mmw_sub_ps(triArea1, triArea2);
-			__mw ccwMask = _mmw_cmpgt_ps(triArea, _mmw_setzero_ps());
+			if (bfWinding != BackfaceWinding::BACKFACE_NONE)
+			{
+				// Perform backface test. 
+			//l1ght back : using cross product to identify cw or ccw -> det = ad - bc
+			//l1ght back : back culling must be calculated in homogeneous/screen space since clip space forms a frustum but not cube 
+				__mw triArea1 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[1], pVtxX[0]), _mmw_sub_ps(pVtxY[2], pVtxY[0]));
+				__mw triArea2 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[0], pVtxX[2]), _mmw_sub_ps(pVtxY[0], pVtxY[1]));
+				__mw triArea = _mmw_sub_ps(triArea1, triArea2);
+				__mw ccwMask = _mmw_cmpgt_ps(triArea, _mmw_setzero_ps());
 
 #if PRECISE_COVERAGE != 0
-			triMask &= CullBackfaces(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
+				triMask &= CullBackfaces(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
 #else
-			triMask &= CullBackfaces(pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
+				triMask &= CullBackfaces(pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
 #endif
+			}
 
 			if (triMask == 0x0)
 				continue;
@@ -1805,9 +2137,11 @@ else
 			//////////////////////////////////////////////////////////////////////////////
 			// Setup and rasterize a SIMD batch of triangles
 			//////////////////////////////////////////////////////////////////////////////
+
 #if PRECISE_COVERAGE != 0
 			cullResult &= RasterizeTriangleBatch<TEST_Z>(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, triMask, &mFullscreenScissor);
 #else
+			//l1ght rast : scissor is in multiple tile size (exactly divide by 32 and 4*n)
 			cullResult &= RasterizeTriangleBatch<TEST_Z>(pVtxX, pVtxY, pVtxZ, triMask, &mFullscreenScissor);
 #endif
 
@@ -1842,9 +2176,9 @@ else
 	}
 #endif
 
-	CullingResult RenderTriangles(const float *inVtx, const unsigned int *inTris, int nTris, const float *modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout &vtxLayout) override
+	CullingResult RenderTriangles(const float* inVtx, const unsigned int* inTris, int nTris, const float* modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout& vtxLayout) override
 	{
-        CullingResult retVal;
+		CullingResult retVal;
 
 		if (vtxLayout.mStride == 16 && vtxLayout.mOffsetY == 4 && vtxLayout.mOffsetW == 12)
 			retVal = (CullingResult)RenderTriangles<0, 1>(inVtx, inTris, nTris, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
@@ -1852,7 +2186,7 @@ else
 			retVal = (CullingResult)RenderTriangles<0, 0>(inVtx, inTris, nTris, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
 
 #if MOC_RECORDER_ENABLE
-        RecordRenderTriangles( inVtx, inTris, nTris, modelToClipMatrix, clipPlaneMask, bfWinding, vtxLayout, retVal );
+		RecordRenderTriangles(inVtx, inTris, nTris, modelToClipMatrix, clipPlaneMask, bfWinding, vtxLayout, retVal);
 #endif
 		return retVal;
 	}
@@ -1861,69 +2195,74 @@ else
 	// Occlusion query functions
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	CullingResult TestTriangles(const float *inVtx, const unsigned int *inTris, int nTris, const float *modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout &vtxLayout) override
+	CullingResult TestTriangles(const float* inVtx, const unsigned int* inTris, int nTris, const float* modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout& vtxLayout) override
 	{
-        CullingResult retVal;
+		CullingResult retVal;
 
-        if (vtxLayout.mStride == 16 && vtxLayout.mOffsetY == 4 && vtxLayout.mOffsetW == 12)
+		if (vtxLayout.mStride == 16 && vtxLayout.mOffsetY == 4 && vtxLayout.mOffsetW == 12)
 			retVal = (CullingResult)RenderTriangles<1, 1>(inVtx, inTris, nTris, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
-        else
-		    retVal = (CullingResult)RenderTriangles<1, 0>(inVtx, inTris, nTris, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
+		else
+			retVal = (CullingResult)RenderTriangles<1, 0>(inVtx, inTris, nTris, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
 
 #if MOC_RECORDER_ENABLE
-        {
-            std::lock_guard<std::mutex> lock( mRecorderMutex );
-            if( mRecorder != nullptr ) mRecorder->RecordTestTriangles( retVal, inVtx, inTris, nTris, modelToClipMatrix, clipPlaneMask, bfWinding, vtxLayout );
-        }
+		{
+			std::lock_guard<std::mutex> lock(mRecorderMutex);
+			if (mRecorder != nullptr) mRecorder->RecordTestTriangles(retVal, inVtx, inTris, nTris, modelToClipMatrix, clipPlaneMask, bfWinding, vtxLayout);
+		}
 #endif
-        return retVal;
+		return retVal;
 	}
-    
-    CullingResult TestRect( float xmin, float ymin, float xmax, float ymax, float wmin ) const override
+
+	CullingResult TestRect(float xmin, float ymin, float xmax, float ymax, float wmin) const override
 	{
 		STATS_ADD(mStats.mOccludees.mNumProcessedRectangles, 1);
 		assert(mMaskedHiZBuffer != nullptr);
 
-		static const __m128i SIMD_TILE_PAD = _mm_setr_epi32(0, TILE_WIDTH, 0, TILE_HEIGHT);
-		static const __m128i SIMD_TILE_PAD_MASK = _mm_setr_epi32(~(TILE_WIDTH - 1), ~(TILE_WIDTH - 1), ~(TILE_HEIGHT - 1), ~(TILE_HEIGHT - 1));
-		static const __m128i SIMD_SUB_TILE_PAD = _mm_setr_epi32(0, SUB_TILE_WIDTH, 0, SUB_TILE_HEIGHT);
-		static const __m128i SIMD_SUB_TILE_PAD_MASK = _mm_setr_epi32(~(SUB_TILE_WIDTH - 1), ~(SUB_TILE_WIDTH - 1), ~(SUB_TILE_HEIGHT - 1), ~(SUB_TILE_HEIGHT - 1));
+		//l1ght : tile 32 * (4 * n)
+		static const __msi SIMD_TILE_PAD = _mms_setr_epi32(0, TILE_WIDTH, 0, TILE_HEIGHT);
+		static const __msi SIMD_TILE_PAD_MASK = _mms_setr_epi32(~(TILE_WIDTH - 1), ~(TILE_WIDTH - 1), ~(TILE_HEIGHT - 1), ~(TILE_HEIGHT - 1));
+		//l1ght : subtile width * height == 32 width 8 height 4
+		static const __msi SIMD_SUB_TILE_PAD = _mms_setr_epi32(0, SUB_TILE_WIDTH, 0, SUB_TILE_HEIGHT);
+		static const __msi SIMD_SUB_TILE_PAD_MASK = _mms_setr_epi32(~(SUB_TILE_WIDTH - 1), ~(SUB_TILE_WIDTH - 1), ~(SUB_TILE_HEIGHT - 1), ~(SUB_TILE_HEIGHT - 1));
 
 		//////////////////////////////////////////////////////////////////////////////
 		// Compute screen space bounding box and guard for out of bounds
 		//////////////////////////////////////////////////////////////////////////////
 #if USE_D3D != 0
-		__m128  pixelBBox = _mmx_fmadd_ps(_mm_setr_ps(xmin, xmax, ymax, ymin), mIHalfSize, mICenter);
+		//l1ght : reverse y
+		__ms  pixelBBox = _mmx_fmadd_ps(_mms_setr_ps(xmin, xmax, ymax, ymin), mIHalfSize, mICenter);
 #else
-		__m128  pixelBBox = _mmx_fmadd_ps(_mm_setr_ps(xmin, xmax, ymin, ymax), mIHalfSize, mICenter);
+		__ms  pixelBBox = _mmx_fmadd_ps(_mms_setr_ps(xmin, xmax, ymin, ymax), mIHalfSize, mICenter);
 #endif
-		__m128i pixelBBoxi = _mm_cvttps_epi32(pixelBBox);
-		pixelBBoxi = _mmx_max_epi32(_mm_setzero_si128(), _mmx_min_epi32(mIScreenSize, pixelBBoxi));
+		__msi pixelBBoxi = _mms_cvttps_epi32(pixelBBox);
+		//l1ght : clamp ss position to (0..width, 0..height)
+		pixelBBoxi = _mmx_max_epi32(_mms_setzero_si128(), _mmx_min_epi32(mIScreenSize, pixelBBoxi));
 
 		//////////////////////////////////////////////////////////////////////////////
 		// Pad bounding box to (32xN) tiles. Tile BB is used for looping / traversal
 		//////////////////////////////////////////////////////////////////////////////
-		__m128i tileBBoxi = _mm_and_si128(_mm_add_epi32(pixelBBoxi, SIMD_TILE_PAD), SIMD_TILE_PAD_MASK);
+		//l1ght : add (0, 32, 0, 4) -> div(32, 4)
+		__msi tileBBoxi = _mms_and_si128(_mms_add_epi32(pixelBBoxi, SIMD_TILE_PAD), SIMD_TILE_PAD_MASK);
 		int txMin = simd_i32(tileBBoxi)[0] >> TILE_WIDTH_SHIFT;
 		int txMax = simd_i32(tileBBoxi)[1] >> TILE_WIDTH_SHIFT;
 		int tileRowIdx = (simd_i32(tileBBoxi)[2] >> TILE_HEIGHT_SHIFT)*mTilesWidth;
 		int tileRowIdxEnd = (simd_i32(tileBBoxi)[3] >> TILE_HEIGHT_SHIFT)*mTilesWidth;
 
 		if (simd_i32(tileBBoxi)[0] == simd_i32(tileBBoxi)[1] || simd_i32(tileBBoxi)[2] == simd_i32(tileBBoxi)[3])
-        {
+		{
 #if MOC_RECORDER_ENABLE
-            {
-                std::lock_guard<std::mutex> lock( mRecorderMutex );
-                if( mRecorder != nullptr ) mRecorder->RecordTestRect( CullingResult::VIEW_CULLED, xmin, ymin, xmax, ymax, wmin );
-            }
+			{
+				std::lock_guard<std::mutex> lock(mRecorderMutex);
+				if (mRecorder != nullptr) mRecorder->RecordTestRect(CullingResult::VIEW_CULLED, xmin, ymin, xmax, ymax, wmin);
+			}
 #endif
-            return CullingResult::VIEW_CULLED;
-        }
+			return CullingResult::VIEW_CULLED;
+		}
 
 		///////////////////////////////////////////////////////////////////////////////
 		// Pad bounding box to (8x4) subtiles. Skip SIMD lanes outside the subtile BB
 		///////////////////////////////////////////////////////////////////////////////
-		__m128i subTileBBoxi = _mm_and_si128(_mm_add_epi32(pixelBBoxi, SIMD_SUB_TILE_PAD), SIMD_SUB_TILE_PAD_MASK);
+		__msi subTileBBoxi = _mms_and_si128(_mms_add_epi32(pixelBBoxi, SIMD_SUB_TILE_PAD), SIMD_SUB_TILE_PAD_MASK);
 		__mwi stxmin = _mmw_set1_epi32(simd_i32(subTileBBoxi)[0] - 1); // - 1 to be able to use GT test
 		__mwi stymin = _mmw_set1_epi32(simd_i32(subTileBBoxi)[2] - 1); // - 1 to be able to use GT test
 		__mwi stxmax = _mmw_set1_epi32(simd_i32(subTileBBoxi)[1]);
@@ -1971,15 +2310,15 @@ else
 
 				// If not all tiles failed the conservative z test we can immediately terminate the test
 				if (!_mmw_testz_epi32(zPass, zPass))
-                {
+				{
 #if MOC_RECORDER_ENABLE
-                    {
-                        std::lock_guard<std::mutex> lock( mRecorderMutex );
-                        if( mRecorder != nullptr ) mRecorder->RecordTestRect( CullingResult::VISIBLE, xmin, ymin, xmax, ymax, wmin );
-                    }
+					{
+						std::lock_guard<std::mutex> lock(mRecorderMutex);
+						if (mRecorder != nullptr) mRecorder->RecordTestRect(CullingResult::VISIBLE, xmin, ymin, xmax, ymax, wmin);
+					}
 #endif
-                    return CullingResult::VISIBLE;
-                }
+					return CullingResult::VISIBLE;
+				}
 
 				if (++tx >= txMax)
 					break;
@@ -1992,16 +2331,16 @@ else
 			pixelY = _mmw_add_epi32(pixelY, _mmw_set1_epi32(TILE_HEIGHT));
 		}
 #if MOC_RECORDER_ENABLE
-        {
-            std::lock_guard<std::mutex> lock( mRecorderMutex );
-            if( mRecorder != nullptr ) mRecorder->RecordTestRect( CullingResult::OCCLUDED, xmin, ymin, xmax, ymax, wmin );
-        }
+		{
+			std::lock_guard<std::mutex> lock(mRecorderMutex);
+			if (mRecorder != nullptr) mRecorder->RecordTestRect(CullingResult::OCCLUDED, xmin, ymin, xmax, ymax, wmin);
+		}
 #endif
 		return CullingResult::OCCLUDED;
 	}
 
 	template<bool FAST_GATHER>
-	FORCE_INLINE void BinTriangles(const float *inVtx, const unsigned int *inTris, int nTris, TriList *triLists, unsigned int nBinsW, unsigned int nBinsH, const float *modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout &vtxLayout)
+	FORCE_INLINE void BinTriangles(const float* inVtx, const unsigned int* inTris, int nTris, TriList* triLists, unsigned int nBinsW, unsigned int nBinsH, const float* modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout& vtxLayout)
 	{
 		assert(mMaskedHiZBuffer != nullptr);
 
@@ -2014,17 +2353,17 @@ else
 
 		int clipHead = 0;
 		int clipTail = 0;
-		__m128 clipTriBuffer[MAX_CLIPPED * 3];
+		__ms clipTriBuffer[MAX_CLIPPED * 3];
 
-		const unsigned int *inTrisPtr = inTris;
+		const unsigned int* inTrisPtr = inTris;
 		int numLanes = SIMD_LANES;
 		int triIndex = 0;
 		while (triIndex < nTris || clipHead != clipTail)
 		{
-            unsigned int triMask = SIMD_ALL_LANES_MASK;
-            __mw vtxX[3], vtxY[3], vtxW[3];
+			unsigned int triMask = SIMD_ALL_LANES_MASK;
+			__mw vtxX[3], vtxY[3], vtxW[3];
 
-            GatherTransformClip<FAST_GATHER>( clipHead, clipTail, numLanes, nTris, triIndex, vtxX, vtxY, vtxW, inVtx, inTrisPtr, vtxLayout, modelToClipMatrix, clipTriBuffer, triMask, clipPlaneMask );
+			GatherTransformClip<FAST_GATHER>(clipHead, clipTail, numLanes, nTris, triIndex, vtxX, vtxY, vtxW, inVtx, inTrisPtr, vtxLayout, modelToClipMatrix, clipTriBuffer, triMask, clipPlaneMask);
 
 			if (triMask == 0x0)
 				continue;
@@ -2045,17 +2384,20 @@ else
 			ProjectVertices(pVtxX, pVtxY, pVtxZ, vtxX, vtxY, vtxW);
 #endif
 
-			// Perform backface test. 
-			__mw triArea1 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[1], pVtxX[0]), _mmw_sub_ps(pVtxY[2], pVtxY[0]));
-			__mw triArea2 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[0], pVtxX[2]), _mmw_sub_ps(pVtxY[0], pVtxY[1]));
-			__mw triArea = _mmw_sub_ps(triArea1, triArea2);
-			__mw ccwMask = _mmw_cmpgt_ps(triArea, _mmw_setzero_ps());
+			if (bfWinding != BackfaceWinding::BACKFACE_NONE)
+			{
+				// Perform backface test. 
+				__mw triArea1 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[1], pVtxX[0]), _mmw_sub_ps(pVtxY[2], pVtxY[0]));
+				__mw triArea2 = _mmw_mul_ps(_mmw_sub_ps(pVtxX[0], pVtxX[2]), _mmw_sub_ps(pVtxY[0], pVtxY[1]));
+				__mw triArea = _mmw_sub_ps(triArea1, triArea2);
+				__mw ccwMask = _mmw_cmpgt_ps(triArea, _mmw_setzero_ps());
 
 #if PRECISE_COVERAGE != 0
-			triMask &= CullBackfaces(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
+				triMask &= CullBackfaces(ipVtxX, ipVtxY, pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
 #else
-			triMask &= CullBackfaces(pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
+				triMask &= CullBackfaces(pVtxX, pVtxY, pVtxZ, ccwMask, bfWinding);
 #endif
+			}
 
 			if (triMask == 0x0)
 				continue;
@@ -2077,8 +2419,8 @@ else
 				unsigned int triIdx = find_clear_lsb(&triMask);
 
 				// Clamp bounding box to bins
-				int startX = min(nBinsW-1, simd_i32(bbPixelMinX)[triIdx] / binWidth);
-				int startY = min(nBinsH-1, simd_i32(bbPixelMinY)[triIdx] / binHeight);
+				int startX = min(nBinsW - 1, simd_i32(bbPixelMinX)[triIdx] / binWidth);
+				int startY = min(nBinsH - 1, simd_i32(bbPixelMinY)[triIdx] / binHeight);
 				int endX = min(nBinsW, (simd_i32(bbPixelMaxX)[triIdx] + binWidth - 1) / binWidth);
 				int endY = min(nBinsH, (simd_i32(bbPixelMaxY)[triIdx] + binHeight - 1) / binHeight);
 
@@ -2109,7 +2451,7 @@ else
 #endif
 	}
 
-	void BinTriangles(const float *inVtx, const unsigned int *inTris, int nTris, TriList *triLists, unsigned int nBinsW, unsigned int nBinsH, const float *modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout &vtxLayout) override
+	void BinTriangles(const float* inVtx, const unsigned int* inTris, int nTris, TriList* triLists, unsigned int nBinsW, unsigned int nBinsH, const float* modelToClipMatrix, BackfaceWinding bfWinding, ClipPlanes clipPlaneMask, const VertexLayout& vtxLayout) override
 	{
 		if (vtxLayout.mStride == 16 && vtxLayout.mOffsetY == 4 && vtxLayout.mOffsetW == 12)
 			BinTriangles<true>(inVtx, inTris, nTris, triLists, nBinsW, nBinsH, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
@@ -2117,83 +2459,82 @@ else
 			BinTriangles<false>(inVtx, inTris, nTris, triLists, nBinsW, nBinsH, modelToClipMatrix, bfWinding, clipPlaneMask, vtxLayout);
 	}
 
-    template<int FAST_GATHER>
-    void GatherTransformClip( int & clipHead, int & clipTail, int & numLanes, int nTris, int & triIndex, __mw * vtxX, __mw * vtxY, __mw * vtxW, const float * inVtx, const unsigned int * &inTrisPtr, const VertexLayout & vtxLayout, const float * modelToClipMatrix, __m128 * clipTriBuffer, unsigned int &triMask, ClipPlanes clipPlaneMask )
-    {
-        //////////////////////////////////////////////////////////////////////////////
-        // Assemble triangles from the index list 
-        //////////////////////////////////////////////////////////////////////////////
-        unsigned int triClipMask = SIMD_ALL_LANES_MASK;
+	template<int FAST_GATHER>
+	void GatherTransformClip(int& clipHead, int& clipTail, int& numLanes, int nTris, int& triIndex, __mw* vtxX, __mw* vtxY, __mw* vtxW, const float* inVtx, const unsigned int*& inTrisPtr, const VertexLayout& vtxLayout, const float* modelToClipMatrix, __ms* clipTriBuffer, unsigned int& triMask, ClipPlanes clipPlaneMask)
+	{
+		//////////////////////////////////////////////////////////////////////////////
+		// Assemble triangles from the index list 
+		//////////////////////////////////////////////////////////////////////////////
+		unsigned int triClipMask = SIMD_ALL_LANES_MASK;
 
-        if( clipHead != clipTail )
-        {
-            int clippedTris = clipHead > clipTail ? clipHead - clipTail : MAX_CLIPPED + clipHead - clipTail;
-            clippedTris = min( clippedTris, SIMD_LANES );
+		if (clipHead != clipTail)
+		{
+			int clippedTris = clipHead > clipTail ? clipHead - clipTail : MAX_CLIPPED + clipHead - clipTail;
+			clippedTris = min(clippedTris, SIMD_LANES);
 
 #if CLIPPING_PRESERVES_ORDER != 0
-            // if preserving order, don't mix clipped and new triangles, handle the clip buffer fully
-            // and then continue gathering; this is not as efficient - ideally we want to gather
-            // at the end (if clip buffer has less than SIMD_LANES triangles) but that requires
-            // more modifications below - something to do in the future.
-            numLanes = 0;
+			// if preserving order, don't mix clipped and new triangles, handle the clip buffer fully
+			// and then continue gathering; this is not as efficient - ideally we want to gather
+			// at the end (if clip buffer has less than SIMD_LANES triangles) but that requires
+			// more modifications below - something to do in the future.
+			numLanes = 0;
 #else
-            // Fill out SIMD registers by fetching more triangles. 
-            numLanes = max( 0, min( SIMD_LANES - clippedTris, nTris - triIndex ) );
+			// Fill out SIMD registers by fetching more triangles. 
+			numLanes = max(0, min(SIMD_LANES - clippedTris, nTris - triIndex));
 #endif
 
-            if( numLanes > 0 ) {
-                if( FAST_GATHER )
-                    GatherVerticesFast( vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes );
-                else
-                    GatherVertices( vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes, vtxLayout );
+			if (numLanes > 0) {
+				if (FAST_GATHER)
+					GatherVerticesFast(vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes);
+				else
+					GatherVertices(vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes, vtxLayout);
 
-                TransformVerts( vtxX, vtxY, vtxW, modelToClipMatrix );
-            }
+				TransformVerts(vtxX, vtxY, vtxW, modelToClipMatrix);
+			}
 
-            for( int clipTri = numLanes; clipTri < numLanes + clippedTris; clipTri++ )
-            {
-                int triIdx = clipTail * 3;
-                for( int i = 0; i < 3; i++ )
-                {
-                    simd_f32( vtxX[i] )[clipTri] = simd_f32( clipTriBuffer[triIdx + i] )[0];
-                    simd_f32( vtxY[i] )[clipTri] = simd_f32( clipTriBuffer[triIdx + i] )[1];
-                    simd_f32( vtxW[i] )[clipTri] = simd_f32( clipTriBuffer[triIdx + i] )[2];
-                }
-                clipTail = ( clipTail + 1 ) & ( MAX_CLIPPED - 1 );
-            }
+			for (int clipTri = numLanes; clipTri < numLanes + clippedTris; clipTri++)
+			{
+				int triIdx = clipTail * 3;
+				for (int i = 0; i < 3; i++)
+				{
+					simd_f32(vtxX[i])[clipTri] = simd_f32(clipTriBuffer[triIdx + i])[0];
+					simd_f32(vtxY[i])[clipTri] = simd_f32(clipTriBuffer[triIdx + i])[1];
+					simd_f32(vtxW[i])[clipTri] = simd_f32(clipTriBuffer[triIdx + i])[2];
+				}
+				clipTail = (clipTail + 1) & (MAX_CLIPPED - 1);
+			}
 
-            triIndex += numLanes;
-            inTrisPtr += numLanes * 3;
+			triIndex += numLanes;
+			inTrisPtr += numLanes * 3;
 
-            triMask = ( 1U << ( clippedTris + numLanes ) ) - 1;
-            triClipMask = ( 1U << numLanes ) - 1; // Don't re-clip already clipped triangles
-        }
-        else
-        {
-            numLanes = min( SIMD_LANES, nTris - triIndex );
-            triMask = ( 1U << numLanes ) - 1;
-            triClipMask = triMask;
+			triMask = (1U << (clippedTris + numLanes)) - 1;
+			triClipMask = (1U << numLanes) - 1; // Don't re-clip already clipped triangles
+		}
+		else
+		{
+			numLanes = min(SIMD_LANES, nTris - triIndex);
+			triMask = (1U << numLanes) - 1;
+			triClipMask = triMask;
 
-            if( FAST_GATHER )
-                GatherVerticesFast( vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes );
-            else
-                GatherVertices( vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes, vtxLayout );
+			if (FAST_GATHER)
+				GatherVerticesFast(vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes);
+			else
+				GatherVertices(vtxX, vtxY, vtxW, inVtx, inTrisPtr, numLanes, vtxLayout);
 
-            TransformVerts( vtxX, vtxY, vtxW, modelToClipMatrix );
+			TransformVerts(vtxX, vtxY, vtxW, modelToClipMatrix);
 
-            triIndex += SIMD_LANES;
-            inTrisPtr += SIMD_LANES * 3;
-        }
+			triIndex += SIMD_LANES;
+			inTrisPtr += SIMD_LANES * 3;
+		}
+		//////////////////////////////////////////////////////////////////////////////
+		// Clip transformed triangles
+		//////////////////////////////////////////////////////////////////////////////
 
-        //////////////////////////////////////////////////////////////////////////////
-        // Clip transformed triangles
-        //////////////////////////////////////////////////////////////////////////////
+		if (clipPlaneMask != ClipPlanes::CLIP_PLANE_NONE)
+			ClipTriangleAndAddToBuffer(vtxX, vtxY, vtxW, clipTriBuffer, clipHead, triMask, triClipMask, clipPlaneMask);
+	}
 
-        if( clipPlaneMask != ClipPlanes::CLIP_PLANE_NONE )
-            ClipTriangleAndAddToBuffer( vtxX, vtxY, vtxW, clipTriBuffer, clipHead, triMask, triClipMask, clipPlaneMask );
-    }
-
-	void RenderTrilist(const TriList &triList, const ScissorRect *scissor) override
+	void RenderTrilist(const TriList& triList, const ScissorRect* scissor) override
 	{
 		assert(mMaskedHiZBuffer != nullptr);
 
@@ -2265,7 +2606,7 @@ else
 		return gInstructionSet;
 	}
 
-	void ComputePixelDepthBuffer(float *depthData, bool flipY) override
+	void ComputePixelDepthBuffer(float* depthData, bool flipY) override
 	{
 		assert(mMaskedHiZBuffer != nullptr);
 		for (int y = 0; y < mHeight; y++)
@@ -2290,10 +2631,10 @@ else
 				int pixelLayer = (simd_i32(mMaskedHiZBuffer[tileIdx].mMask)[subTileIdx] >> bitIdx) & 1;
 				float pixelDepth = simd_f32(mMaskedHiZBuffer[tileIdx].mZMin[pixelLayer])[subTileIdx];
 
-                if( flipY )
-                    depthData[( mHeight - y - 1 ) * mWidth + x] = pixelDepth;
-                else
-                    depthData[y * mWidth + x] = pixelDepth;
+				if (flipY)
+					depthData[(mHeight - y - 1) * mWidth + x] = pixelDepth;
+				else
+					depthData[y * mWidth + x] = pixelDepth;
 			}
 		}
 	}

@@ -1,3 +1,4 @@
+#if !USE_SOC
 ////////////////////////////////////////////////////////////////////////////////
 // Copyright 2017 Intel Corporation
 //
@@ -16,27 +17,28 @@
 #include <string.h>
 #include <assert.h>
 #include <float.h>
+#include <stdio.h>
 #include "MaskedOcclusionCulling.h"
 #include "CompilerSpecific.inl"
 
 #if MOC_RECORDER_ENABLE
-#include "FrameRecorder.h"
+#include "../FrameRecorder.h"
 #endif
 
 #if defined(__MICROSOFT_COMPILER) && _MSC_VER < 1900
 	// If you remove/comment this error, the code will compile & use the SSE41 version instead. 
-	#error Older versions than visual studio 2015 not supported due to compiler bug(s)
+//#error Older versions than visual studio 2015 not supported due to compiler bug(s)
 #endif
 
-#if !defined(__MICROSOFT_COMPILER) || _MSC_VER >= 1900
+#if (!defined(__MICROSOFT_COMPILER) || _MSC_VER >= 1900) && (defined __AVX2__) && (defined(PLATFORM_WIN) || defined(PLATFORM_STANDALONE_WIN))
 
 // For performance reasons, the MaskedOcclusionCullingAVX2.cpp file should be compiled with VEX encoding for SSE instructions (to avoid 
 // AVX-SSE transition penalties, see https://software.intel.com/en-us/articles/avoiding-avx-sse-transition-penalties). However, the SSE
 // version in MaskedOcclusionCulling.cpp _must_ be compiled without VEX encoding to allow backwards compatibility. Best practice is to 
 // use lowest supported target platform (e.g. /arch:SSE2) as project default, and elevate only the MaskedOcclusionCullingAVX2/512.cpp files.
-#ifndef __AVX2__
-	#error For best performance, MaskedOcclusionCullingAVX2.cpp should be compiled with /arch:AVX2
-#endif
+// #ifndef __AVX2__
+// #error For best performance, MaskedOcclusionCullingAVX2.cpp should be compiled with /arch:AVX2
+// #endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // AVX specific defines and constants
@@ -63,9 +65,6 @@
 
 typedef __m256 __mw;
 typedef __m256i __mwi;
-
-void print_simd(__m256) {}
-void print_simd(__m256i) {}
 
 #define _mmw_storeu_ps				_mm256_storeu_ps
 #define _mmw_loadu_ps				_mm256_loadu_ps
@@ -170,13 +169,13 @@ MAKE_ACCESSOR(simd_i32, __m256i, int, const, 8)
 
 typedef MaskedOcclusionCulling::VertexLayout VertexLayout;
 
-FORCE_INLINE void GatherVertices(__m256 *vtxX, __m256 *vtxY, __m256 *vtxW, const float *inVtx, const unsigned int *inTrisPtr, int numLanes, const VertexLayout &vtxLayout)
+FORCE_INLINE void GatherVertices(__m256* vtxX, __m256* vtxY, __m256* vtxW, const float* inVtx, const unsigned int* inTrisPtr, int numLanes, const VertexLayout& vtxLayout)
 {
 	assert(numLanes >= 1);
 
 	const __m256i SIMD_TRI_IDX_OFFSET = _mm256_setr_epi32(0, 3, 6, 9, 12, 15, 18, 21);
 	static const __m256i SIMD_LANE_MASK[9] = {
-		_mm256_setr_epi32( 0,  0,  0,  0,  0,  0,  0,  0),
+		_mm256_setr_epi32(0,  0,  0,  0,  0,  0,  0,  0),
 		_mm256_setr_epi32(~0,  0,  0,  0,  0,  0,  0,  0),
 		_mm256_setr_epi32(~0, ~0,  0,  0,  0,  0,  0,  0),
 		_mm256_setr_epi32(~0, ~0, ~0,  0,  0,  0,  0,  0),
@@ -196,14 +195,14 @@ FORCE_INLINE void GatherVertices(__m256 *vtxX, __m256 *vtxY, __m256 *vtxW, const
 	vtxIdx[1] = _mmw_mullo_epi32(_mm256_i32gather_epi32((const int*)inTrisPtr + 1, safeTriIdxOffset, 4), _mmw_set1_epi32(vtxLayout.mStride));
 	vtxIdx[2] = _mmw_mullo_epi32(_mm256_i32gather_epi32((const int*)inTrisPtr + 2, safeTriIdxOffset, 4), _mmw_set1_epi32(vtxLayout.mStride));
 
-	char *vPtr = (char *)inVtx;
+	char* vPtr = (char*)inVtx;
 
 	// Fetch triangle vertices
 	for (int i = 0; i < 3; i++)
 	{
-		vtxX[i] = _mm256_i32gather_ps((float *)vPtr, vtxIdx[i], 1);
-		vtxY[i] = _mm256_i32gather_ps((float *)(vPtr + vtxLayout.mOffsetY), vtxIdx[i], 1);
-		vtxW[i] = _mm256_i32gather_ps((float *)(vPtr + vtxLayout.mOffsetW), vtxIdx[i], 1);
+		vtxX[i] = _mm256_i32gather_ps((float*)vPtr, vtxIdx[i], 1);
+		vtxY[i] = _mm256_i32gather_ps((float*)(vPtr + vtxLayout.mOffsetY), vtxIdx[i], 1);
+		vtxW[i] = _mm256_i32gather_ps((float*)(vPtr + vtxLayout.mOffsetW), vtxIdx[i], 1);
 	}
 }
 
@@ -215,18 +214,18 @@ namespace MaskedOcclusionCullingAVX2
 	// Include common algorithm implementation (general, SIMD independent code)
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	#include "MaskedOcclusionCullingCommon.inl"
+#include "../MaskedOcclusionCullingCommon.inl"
 
-	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	// Utility function to create a new object using the allocator callbacks
-	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Utility function to create a new object using the allocator callbacks
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 	typedef MaskedOcclusionCulling::pfnAlignedAlloc            pfnAlignedAlloc;
 	typedef MaskedOcclusionCulling::pfnAlignedFree             pfnAlignedFree;
 
-	MaskedOcclusionCulling *CreateMaskedOcclusionCulling(pfnAlignedAlloc alignedAlloc, pfnAlignedFree alignedFree)
+	MaskedOcclusionCulling* CreateMaskedOcclusionCulling(pfnAlignedAlloc alignedAlloc, pfnAlignedFree alignedFree)
 	{
-		MaskedOcclusionCullingPrivate *object = (MaskedOcclusionCullingPrivate *)alignedAlloc(64, sizeof(MaskedOcclusionCullingPrivate));
+		MaskedOcclusionCullingPrivate* object = (MaskedOcclusionCullingPrivate*)alignedAlloc(64, sizeof(MaskedOcclusionCullingPrivate));
 		new (object) MaskedOcclusionCullingPrivate(alignedAlloc, alignedFree);
 		return object;
 	}
@@ -239,10 +238,12 @@ namespace MaskedOcclusionCullingAVX2
 	typedef MaskedOcclusionCulling::pfnAlignedAlloc            pfnAlignedAlloc;
 	typedef MaskedOcclusionCulling::pfnAlignedFree             pfnAlignedFree;
 
-	MaskedOcclusionCulling *CreateMaskedOcclusionCulling(pfnAlignedAlloc alignedAlloc, pfnAlignedFree alignedFree)
+	MaskedOcclusionCulling* CreateMaskedOcclusionCulling(pfnAlignedAlloc alignedAlloc, pfnAlignedFree alignedFree)
 	{
 		return nullptr;
 	}
 };
+
+#endif
 
 #endif

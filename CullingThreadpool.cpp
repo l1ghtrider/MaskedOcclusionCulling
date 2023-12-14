@@ -1,3 +1,4 @@
+#if !USE_SOC
 ////////////////////////////////////////////////////////////////////////////////
 // Copyright 2017 Intel Corporation
 //
@@ -470,3 +471,4 @@ void CullingThreadpool::ComputePixelDepthBuffer(float *depthData, bool flipY)
 	Flush();
 	mMOC->ComputePixelDepthBuffer(depthData, flipY);
 }
+#endif
