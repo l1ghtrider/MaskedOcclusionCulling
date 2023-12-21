@@ -1118,7 +1118,8 @@ public:
 				sortTileDelay.offLane = offLane;
 				sortTileDelay.mZBuffer = mZBuffer;
 				//std::sort(indices.begin(), indices.begin() + counterSize, sortTileDelay);
-				std::sort(indices, indices + counterSize, //sortTileDelay
+				//l1ght delay : std::sort should contains a compatible return type
+				std::sort(indices, indices + counterSize, //sortTileDelay 
 					[this, offLane](int a, int b) {
 					return mZBuffer[offLane + SIMD_LANES * a] > mZBuffer[offLane + SIMD_LANES * b];
 				}
