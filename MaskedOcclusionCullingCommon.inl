@@ -1138,7 +1138,7 @@ public:
 						reindices[delayInd] = current;
 					}
 				}
-				if (counterSize == 2) printf("%f.4 %f.4 \n", mZBuffer[offLane], mZBuffer[offLane + SIMD_LANES]);
+				//if (counterSize == 2) printf("%f.4 %f.4 \n", mZBuffer[offLane], mZBuffer[offLane + SIMD_LANES]);
 				maxSize = std::max(counterSize, maxSize);
 			}
 

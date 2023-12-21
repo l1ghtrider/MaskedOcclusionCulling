@@ -154,16 +154,16 @@ int main(int argc, char* argv[])
 	//moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
 	//moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
 	
-	moc->delayMask = false;
-	moc->RenderTrianglesSort((float*)oqTriVerts, oqTriIndices, 1);
-	//moc->RenderFlush(); //l1ght example : uncomment to show no sort situation
-	moc->RenderTrianglesSort((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
-	moc->TriangleFlush();
+	//moc->delayMask = false;
+	//moc->RenderTrianglesSort((float*)oqTriVerts, oqTriIndices, 1);
+	////moc->RenderFlush(); //l1ght example : uncomment to show no sort situation
+	//moc->RenderTrianglesSort((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+	//moc->TriangleFlush();
 
-	//moc->delayMask = true;
-	//moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
-	//moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
-	//moc->RenderFlush();
+	moc->delayMask = true;
+	moc->RenderTriangles((float*)oqTriVerts, oqTriIndices, 1);
+	moc->RenderTriangles((float*)quadVerts, quadIndices, 2, nullptr, MaskedOcclusionCulling::BACKFACE_CW, MaskedOcclusionCulling::CLIP_PLANE_NONE);
+	moc->RenderFlush();
 
 	// Perform an occlusion query testing if a rectangle is visible. The rectangle is completely 
 	// behind the previously drawn quad, so the query should indicate that it's occluded
@@ -182,7 +182,13 @@ int main(int argc, char* argv[])
 	// Tonemap the image
 	unsigned char *image = new unsigned char[width * height * 3];
 	TonemapDepth(perPixelZBuffer, image, width, height);
-	WriteBMP("image.bmp", image, width, height);
+	WriteBMP(
+		#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+		"image_arm.bmp"
+		#else
+		"image.bmp"
+		#endif
+		, image, width, height);
 	delete[] image;
 
 	// Destroy occlusion culling object and free hierarchical z-buffer
