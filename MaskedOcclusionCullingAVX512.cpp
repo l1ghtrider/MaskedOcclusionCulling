@@ -27,8 +27,9 @@
 
 #ifdef USE_AVX512
 #undef USE_AVX512
+#define USE_AVX512 1
 #endif
-#define USE_AVX512 0
+
 // Make sure compiler supports AVX-512 intrinsics: Visual Studio 2017 (Update 3) || Intel C++ Compiler 16.0 || Clang 4.0 || GCC 5.0
 #if USE_AVX512 != 0 && ((defined(_MSC_VER) && _MSC_VER >= 1911) || (defined(__INTEL_COMPILER) && __INTEL_COMPILER >= 1600) || (defined(__clang__) && __clang_major__ >= 4) || (defined(__GNUC__) && __GNUC__ >= 5))
 
@@ -67,6 +68,8 @@ typedef __m512i __mwi;
 
 #define _mmw_storeu_ps				_mm512_storeu_ps
 #define _mmw_loadu_ps				_mm512_loadu_ps
+#define _mmw_storeu_epi32			_mm512_storeu_si512
+#define _mmw_loadu_epi32			_mm512_loadu_si512
 #define _mmw_set1_ps                _mm512_set1_ps
 #define _mmw_setzero_ps             _mm512_setzero_ps
 #define _mmw_and_ps                 _mm512_and_ps
@@ -284,7 +287,7 @@ namespace MaskedOcclusionCullingAVX512
 	// Include common algorithm implementation (general, SIMD independent code)
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "../MaskedOcclusionCullingCommon.inl"
+#include "MaskedOcclusionCullingCommon.inl"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Utility function to create a new object using the allocator callbacks

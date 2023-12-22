@@ -30,7 +30,7 @@
 //#error Older versions than visual studio 2015 not supported due to compiler bug(s)
 #endif
 
-#if (!defined(__MICROSOFT_COMPILER) || _MSC_VER >= 1900) && (defined __AVX2__) && (defined(PLATFORM_WIN) || defined(PLATFORM_STANDALONE_WIN))
+#if (!defined(__MICROSOFT_COMPILER) || _MSC_VER >= 1900) && defined(__AVX2__) /*&& (defined(PLATFORM_WIN) || defined(PLATFORM_STANDALONE_WIN))*/
 
 // For performance reasons, the MaskedOcclusionCullingAVX2.cpp file should be compiled with VEX encoding for SSE instructions (to avoid 
 // AVX-SSE transition penalties, see https://software.intel.com/en-us/articles/avoiding-avx-sse-transition-penalties). However, the SSE
@@ -68,6 +68,8 @@ typedef __m256i __mwi;
 
 #define _mmw_storeu_ps				_mm256_storeu_ps
 #define _mmw_loadu_ps				_mm256_loadu_ps
+#define _mmw_storeu_epi32			_mm256_storeu_si256
+#define _mmw_loadu_epi32			_mm256_loadu_si256
 #define _mmw_set1_ps                _mm256_set1_ps
 #define _mmw_setzero_ps             _mm256_setzero_ps
 #define _mmw_and_ps                 _mm256_and_ps
@@ -214,7 +216,7 @@ namespace MaskedOcclusionCullingAVX2
 	// Include common algorithm implementation (general, SIMD independent code)
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-#include "../MaskedOcclusionCullingCommon.inl"
+#include "MaskedOcclusionCullingCommon.inl"
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Utility function to create a new object using the allocator callbacks

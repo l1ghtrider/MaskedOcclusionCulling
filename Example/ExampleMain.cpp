@@ -20,10 +20,15 @@
 #include <stdlib.h>
 #include <float.h>
 #include <algorithm>
-#ifdef _WIN32
-	#include <intrin.h>
+
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+	#include <arm_neon.h>
 #else
-	#include <immintrin.h>
+	#ifdef _WIN32
+		#include <intrin.h>
+	#else
+		#include <immintrin.h>
+	#endif
 #endif
 
 #include "../MaskedOcclusionCulling.h"
@@ -51,7 +56,7 @@ static void WriteBMP(const char *filename, const unsigned char *data, int w, int
 static void TonemapDepth(float *depth, unsigned char *image, int w, int h)
 {
 	// Find min/max w coordinate (discard cleared pixels)
-	float minW = FLT_MAX, maxW = 0.0f;
+	float minW = FLT_MAX / 4.0f, maxW = 0.0f;
 	for (int i = 0; i < w*h; ++i)
 	{
 		if (depth[i] > 0.0f)
@@ -66,7 +71,7 @@ static void TonemapDepth(float *depth, unsigned char *image, int w, int h)
 	{
 		int intensity = 0;
 		if (depth[i] > 0)
-			intensity = (unsigned char)(223.0*(depth[i] - minW) / (maxW - minW) + 32.0);
+			intensity = (unsigned char)(100.0*(depth[i] - minW) / (maxW - minW) + 155.0);
 			
 		image[i * 3 + 0] = intensity;
 		image[i * 3 + 1] = intensity;
@@ -78,10 +83,18 @@ static void TonemapDepth(float *depth, unsigned char *image, int w, int h)
 // Tutorial example code
 ////////////////////////////////////////////////////////////////////////////////////////
 
+//FILE *fptr;
+
 int main(int argc, char* argv[])
 {
+//#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+//    fptr = freopen("sample_arm.log", "w", stdout);
+//#else
+//    fptr = freopen("sample.log", "w", stdout);
+//#endif
+
 	// Flush denorms to zero to avoid performance issues with small values
-	_mm_setcsr(_mm_getcsr() | 0x8040);
+	//_mm_setcsr(_mm_getcsr() | 0x8040);
 
 	MaskedOcclusionCulling *moc = MaskedOcclusionCulling::Create();
 
@@ -95,6 +108,8 @@ int main(int argc, char* argv[])
 	case MaskedOcclusionCulling::SSE41: printf("Using SSE41 version\n"); break;
 	case MaskedOcclusionCulling::AVX2: printf("Using AVX2 version\n"); break;
 	case MaskedOcclusionCulling::AVX512: printf("Using AVX-512 version\n"); break;
+	case MaskedOcclusionCulling::NEON: printf("Using NEON version\n"); break;
+	default: break;
 	}
 
 	////////////////////////////////////////////////////////////////////////////////////////
@@ -137,6 +152,7 @@ int main(int argc, char* argv[])
 
 	// A triangle, partly overlapped by the quad
 	ClipspaceVertex oqTriVerts[] = { { 0, 50, 0, 200 }, { -60, -60, 0, 200 }, { 20, -40, 0, 200 } };
+
 	unsigned int oqTriIndices[] = { 0, 1, 2 };
 
 	// Perform an occlusion query. The triangle is visible and the query should return VISIBLE
@@ -193,5 +209,5 @@ int main(int argc, char* argv[])
 
 	// Destroy occlusion culling object and free hierarchical z-buffer
 	MaskedOcclusionCulling::Destroy(moc);
-
+	//fclose(fptr);
 }

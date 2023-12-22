@@ -1058,10 +1058,14 @@ public:
 	{
 		int indTile = tileIdx * delaySize * SIMD_LANES;
 		int indCounter = tileIdx * SIMD_LANES;
-		//float* zTrivArr = reinterpret_cast<float*>(const_cast<__mw*>(&zTriv));
-		//unsigned int* coverageArr = reinterpret_cast<unsigned int*>(const_cast<__mwi*>(&coverage));
 		_mmw_storeu_ps(zTrivArr, zTriv);
-		_mmw_storeu_epi32(coverageArr, coverage);
+		//float* zTrivArr = reinterpret_cast<float*>(const_cast<__mw*>(&zTriv));
+#ifdef __ARM_NEON
+		_mmw_storeu_epi32((int*)coverageArr, coverage);
+#else
+		_mmw_storeu_epi32((__mwi*)coverageArr, coverage);
+#endif
+		//unsigned int* coverageArr = reinterpret_cast<unsigned int*>(const_cast<__mwi*>(&coverage));
 		for (int laneInd = 0; laneInd < SIMD_LANES; laneInd++)
 		{
 			if (mCounterBuffer[indCounter + laneInd] < delaySize)
@@ -1148,11 +1152,16 @@ public:
 			for (int counterInd = 0; counterInd < maxSize; counterInd++)
 			{
 				//update one tile
-				//__mw* zTriv = reinterpret_cast<__mw*>(mZBuffer + offTile);
-				//__mwi* coverage = reinterpret_cast<__mwi*>(mMaskBuffer + offTile);
+				//__mw zTriv = *reinterpret_cast<__mw*>(mZBuffer + offTile);
 				__mw zTriv = _mmw_loadu_ps(mZBuffer + offTile + counterInd * SIMD_LANES);
-				__mwi coverage = _mmw_loadu_epi32(mMaskBuffer + offTile + counterInd * SIMD_LANES);
-				__mwi deadLane = simd_cast<__mwi>(_mmw_cmpneq_ps(zMin0, _mmw_set1_ps(-1.0f))); //zMin0 is only updated when fullLane
+				//__mwi coverage = *reinterpret_cast<__mwi*>(mMaskBuffer + offTile);
+#ifdef __ARM_NEON
+				__mwi coverage = _mmw_loadu_epi32((const int*)(mMaskBuffer + offTile + counterInd * SIMD_LANES));
+#else
+				__mwi coverage = _mmw_loadu_epi32((const __mwi*)(mMaskBuffer + offTile + counterInd * SIMD_LANES));
+#endif
+				
+				__mwi deadLane = simd_cast<__mwi>(_mmw_not_ps(_mmw_cmpeq_ps(zMin0, _mmw_set1_ps(-1.0f)))); //zMin0 is only updated when fullLane
 				__mwi maskNow = _mmw_or_epi32(mask, coverage);
 				deadLane = _mmw_or_epi32(_mmw_cmpeq_epi32(maskNow, mask), deadLane); //cliped
 				__mwi fullLane = _mmw_cmpeq_epi32(maskNow, SIMD_BITS_ONE);

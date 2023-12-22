@@ -1,4 +1,4 @@
-#if USE_SOC
+#if !USE_SOC
 #include "UnityPrefix.h"
 #include "MSOC.h"
 

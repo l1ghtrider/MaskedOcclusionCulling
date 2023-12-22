@@ -207,10 +207,8 @@ typedef __m128i __mwi;
 
 #define _mmw_storeu_ps				_mm_storeu_ps
 #define _mmw_loadu_ps				_mm_loadu_ps
-
-#define _mmw_storeu_epi32			_mm_storeu_epi32
-#define _mmw_loadu_epi32			_mm_loadu_epi32
-
+#define _mmw_storeu_epi32			_mm_storeu_si128
+#define _mmw_loadu_epi32			_mm_loadu_si128
 #define _mmw_set1_ps                _mm_set1_ps
 #define _mmw_setzero_ps             _mm_setzero_ps
 #define _mmw_and_ps                 _mm_and_ps
@@ -230,7 +228,6 @@ typedef __m128i __mwi;
 #define _mmw_cmpge_ps(a,b)          _mm_cmpge_ps(a, b)
 #define _mmw_cmpgt_ps(a,b)          _mm_cmpgt_ps(a, b)
 #define _mmw_cmpeq_ps(a,b)          _mm_cmpeq_ps(a, b)
-#define _mmw_cmpneq_ps(a,b)			_mm_cmpneq_ps(a,b)
 #define _mmw_fmadd_ps(a,b,c)        _mm_add_ps(_mm_mul_ps(a,b), c)
 #define _mmw_fmsub_ps(a,b,c)        _mm_sub_ps(_mm_mul_ps(a,b), c)
 #define _mmw_shuffle_ps             _mm_shuffle_ps
@@ -494,7 +491,7 @@ MaskedOcclusionCulling* MaskedOcclusionCulling::Create(Implementation RequestedS
 {
 	MaskedOcclusionCulling* object = nullptr;
 
-	MaskedOcclusionCulling::Implementation impl = DetectCPUFeatures(alignedAlloc, alignedFree);
+	MaskedOcclusionCulling::Implementation impl = DetectCPUFeatures(alignedAlloc, alignedFree); 
 	//MaskedOcclusionCulling::Implementation impl = MaskedOcclusionCulling::AVX512;
 
 	if (RequestedSIMD < impl)

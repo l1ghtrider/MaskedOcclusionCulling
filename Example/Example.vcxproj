@@ -175,7 +175,7 @@
       <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Release|x64'">AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Release_LLVM|x64'">-mavx512f -mavx512bw -mavx512dq %(AdditionalOptions)</AdditionalOptions>
       <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Release_LLVM|x64'">AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
-      <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Debug_LLVM|x64'">AdvancedVectorExtensions2</EnableEnhancedInstructionSet>
+      <EnableEnhancedInstructionSet Condition="'$(Configuration)|$(Platform)'=='Debug_LLVM|x64'">AdvancedVectorExtensions512</EnableEnhancedInstructionSet>
       <AdditionalOptions Condition="'$(Configuration)|$(Platform)'=='Debug_LLVM|x64'">-mavx512f -mavx512bw -mavx512dq %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ClCompile Include="ExampleMain.cpp">

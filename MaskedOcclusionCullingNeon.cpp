@@ -1,4 +1,4 @@
-#if USE_SOC
+#if !USE_SOC
 ////////////////////////////////////////////////////////////////////////////////
 // Copyright 2017 Intel Corporation
 //
@@ -66,6 +66,8 @@ typedef __msi __mwi;
 
 #define _mmw_storeu_ps				vst1q_f32
 #define _mmw_loadu_ps				vld1q_f32
+#define _mmw_storeu_epi32			vst1q_s32
+#define _mmw_loadu_epi32			vld1q_s32
 #define _mmw_set1_ps                vdupq_n_f32
 FORCE_INLINE __mw _mmw_setzero_ps() {
 	return _mmw_set1_ps(0.0f);
